@@ -1,0 +1,107 @@
+---
+title: "State Housing Employment"
+output: html_notebook
+---
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+library(tidyverse)
+library(tidyquant)
+library(highcharter)
+library(timetk)
+library(tibbletime)
+library(data.table)
+library(geofacet)
+library(scales)
+library(readxl)
+library(RcppRoll)
+```
+
+
+```{r}
+states_hpi <- 
+  read_excel("states-hpi.xls", 
+        col_types = c("text", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "skip", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric",
+        "numeric", "skip"), skip = 5) %>% 
+  # rename usa hpi first
+  rename(usa = `United States not seasonally adjusted`) %>% 
+  slice(-517:-532) %>% 
+  # parse the date with lubridate
+  mutate(date = ymd(parse_date_time(as.character(Month), "%Y%m"))) %>% 
+  select(date, everything(), -Month) %>% 
+  gather(state, hpi, -date) %>% 
+  group_by(state) %>%
+  # use lag
+  mutate(hpa12 = hpi/lag(hpi, 12) - 1,
+         hpa1 = hpi/lag(hpi, 1) - 1,
+         hpilag12 = lag(hpi, 12, fill = NA),
+         # use RcppRoll functions
+         hpimax12 = roll_max(hpi, 13, align = "right", fill = NA),
+         hpimin12 = roll_min(hpi, 13, align = "right", fill = NA),
+         year = year(date),
+         month = month(date)) %>% 
+  filter(month == 12 & year > 1989) %>% 
+  select(year, state, hpa12)
+
+
+my_states_grid <- states_hpi %>% 
+  select(-Month) %>% 
+  colnames()
+
+my_state_codes <- 
+  c(
+  # nonfarm employment is NA for seasonally adjusted, change to NAN for not adjusted. weird
+  paste0(my_states_grid,"NA"),      
+  # resident population (annual)
+  paste0(my_states_grid,"POP"),
+  # private building permits (monthly, NSA)
+  paste(my_states_grid, "BPPRIV", sep = "")  
+           )
+
+state_emp_pop_perm_data <- tq_get(my_state_codes,
+                                  get = "economic.data", 
+                                  from = "2016-06-01")
+
+# Get national data
+# employment via FRED
+nat_emp_date <-
+  tq_get("PAYEMS"
+        get = "economic.data", 
+        from = "2016-06-01") %>% 
+  mutate(emp_growth = Delt(price, k = 12))
+
+
+recessions.df = read.table(textConnection(
+  "Peak, Trough
+  1948-11-01, 1949-10-01
+  1953-07-01, 1954-05-01
+  1957-08-01, 1958-04-01
+  1960-04-01, 1961-02-01
+  1969-12-01, 1970-11-01
+  1973-11-01, 1975-03-01
+  1980-01-01, 1980-07-01
+  1981-07-01, 1982-11-01
+  1990-07-01, 1991-03-01
+  2001-03-01, 2001-11-01
+  2007-12-01, 2009-06-01"), sep=',',
+  colClasses = c('Date', 'Date'), header = TRUE)
+
+```
+

@@ -1,0 +1,259 @@
+---
+title: "Jobs Report"
+output: html_notebook
+---
+
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+library(tidyverse)
+library(tidyquant)
+library(highcharter)
+library(timetk)
+library(tibbletime)
+library(data.table)
+library(geofacet)
+library(scales)
+library(readxl)
+library(RcppRoll)
+```
+
+
+```{r}
+states_hpi <- 
+  read_excel("states-hpi.xls", 
+        col_types = c("text", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "skip", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric",
+        "numeric", "skip"), skip = 5) %>% 
+  # rename usa hpi first
+  rename(usa = `United States not seasonally adjusted`) %>% 
+  slice(-517:-532) %>% 
+  # parse the date with lubridate
+  mutate(date = ymd(parse_date_time(as.character(Month), "%Y%m"))) %>% 
+  select(date, everything(), -Month) %>% 
+  gather(state, hpi, -date) %>% 
+  group_by(state) %>%
+  # use lag
+  mutate(hpa12 = hpi/lag(hpi, 12) - 1,
+         hpa1 = hpi/lag(hpi, 1) - 1,
+         hpilag12 = lag(hpi, 12, fill = NA),
+         # use RcppRoll functions
+         hpimax12 = roll_max(hpi, 13, align = "right", fill = NA),
+         hpimin12 = roll_min(hpi, 13, align = "right", fill = NA),
+         year = year(date),
+         month = month(date)) %>% 
+  filter(month == 12 & year > 1989) %>% 
+  select(year, state, hpa12)
+
+
+my_states_grid <- states_hpi %>% 
+  select(-Month) %>% 
+  colnames()
+
+my_state_codes <- 
+  c(
+  # nonfarm employment is NA for seasonally adjusted, change to NAN for not adjusted. weird
+  paste0(my_states_grid,"NA"),      
+  # resident population (annual)
+  paste0(my_states_grid,"POP"),
+  # private building permits (monthly, NSA)
+  paste(my_states_grid, "BPPRIV", sep = "")  
+           )
+
+state_emp_pop_perm_data <- tq_get(my_state_codes,
+                                  get = "economic.data", 
+                                  from = "2017-06-01")
+
+recessions.df = read.table(textConnection(
+  "Peak, Trough
+  1948-11-01, 1949-10-01
+  1953-07-01, 1954-05-01
+  1957-08-01, 1958-04-01
+  1960-04-01, 1961-02-01
+  1969-12-01, 1970-11-01
+  1973-11-01, 1975-03-01
+  1980-01-01, 1980-07-01
+  1981-07-01, 1982-11-01
+  1990-07-01, 1991-03-01
+  2001-03-01, 2001-11-01
+  2007-12-01, 2009-06-01"), sep=',',
+  colClasses = c('Date', 'Date'), header = TRUE)
+
+```
+
+Import non farm payroll data
+
+```{r}
+fred_codes <- c(
+            "CIVPART", # civilian labor force pariticipation rate
+            "EMRATIO", # employment-to-population ratio
+            "NROU",  # estimate of natural rate of unemployment from U.S. CBO
+            "PAYEMS", # nonfarm payroll employment
+            "UNRATE") # unemployment rate
+            
+column_names <- c(
+            "date",
+            "Labor Force Part Rate",
+            "Employment-to-Pop Ratio",
+            "Nat Rate Unemployment",
+            "Nonfarm Employment",
+            "Unemployment Rate")
+
+
+# download data via FRED 
+fred_empl_data <- tq_get(fred_codes,                         # get selected symbols
+            get = "economic.data",             # use FRED
+            from = "1980-01-01")  
+
+fred_empl_data_wrangled <- 
+  fred_empl_data %>% 
+  spread(symbol, price) %>% 
+  `colnames<-`(column_names) %>% 
+ # gather(set, value, -date)
+  # make nat rate unemployment monthly by filling in the NAs
+  mutate(`Nat Rate Unemployment` = na.locf(`Nat Rate Unemployment`, na.rm = F)) %>%
+  
+  mutate(`Unemployment Gap` = `Unemployment Rate` - `Nat Rate Unemployment`,
+         `Employment Monthly Change` = `Nonfarm Employment` - lag(`Nonfarm Employment`),
+         # create indicators for shaded plot
+         up = if_else(`Unemployment Rate` > `Nat Rate Unemployment`, 
+                      `Unemployment Rate`, 
+                      `Nat Rate Unemployment`),
+         down = if_else(`Unemployment Rate` < `Nat Rate Unemployment`, 
+                        `Unemployment Rate`, 
+                        `Nat Rate Unemployment`))
+```
+
+
+```{r}
+fred_empl_data_wrangled %>%
+  mutate(col_blue = 
+           if_else(`Employment Monthly Change` > 0, 
+                  `Employment Monthly Change`, NULL),
+         col_red = 
+           if_else(`Employment Monthly Change` < 0, 
+                  `Employment Monthly Change`, NULL)) %>%
+  ggplot(aes(x = date)) +
+  geom_col(aes(y = col_red),
+               alpha = .85, 
+               fill = "pink", 
+               color = "pink") +
+  geom_col(aes(y = col_blue),
+               alpha = .85, 
+               fill = "cornflowerblue", 
+               color = "cornflowerblue") +
+  ylab("Monthly Change") +
+  ggtitle("Monthly Private Employment Change") +
+  scale_x_date(date_breaks = "2 years", 
+               date_labels = "%Y") +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10),
+                     labels = scales::comma) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+  
+```
+
+
+```{r}
+fred_empl_data_wrangled %>% 
+  mutate(ribbon_pink = 
+           if_else(`Unemployment Rate` > `Nat Rate Unemployment`, 
+                  `Unemployment Rate`, `Nat Rate Unemployment`),
+         ribbon_blue = 
+           if_else(`Unemployment Rate` < `Nat Rate Unemployment`, 
+                  `Unemployment Rate`, `Nat Rate Unemployment`)) %>%
+  ggplot(aes(x = date, y = `Unemployment Rate`)) +
+  geom_rect(data = recessions.df, 
+            inherit.aes = F, 
+            aes(xmin = Peak, xmax = Trough, ymin = -Inf, ymax = +Inf), 
+            fill = 'darkgray', 
+            alpha = 0.5)  +
+  geom_line(color = "black") +
+  geom_line(linetype = 2, aes(y = `Nat Rate Unemployment`)) +
+  geom_ribbon(aes(ymin = `Nat Rate Unemployment`, 
+                  ymax = ribbon_pink), 
+              fill = "pink", 
+              alpha = 0.5)+
+  geom_ribbon(aes(ymin = `Nat Rate Unemployment`,
+                  ymax = ribbon_blue), 
+              fill = "cornflowerblue", 
+              alpha = 0.5)  +
+  xlim(ymd("1980-01-01"), ymd("2018-03-01"))
+```
+
+
+Visualize employment data
+
+```{r}
+
+```
+
+
+Import and wrangle the labor force participation data
+
+```{r}
+labor_for_part_data <- 
+  fread("https://download.bls.gov/pub/time.series/ln/ln.data.1.AllData") %>%
+  filter(series_id == "LNS11300060" |
+        series_id == "LNS11300061" | 
+        series_id == "LNS11300062") %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = case_when(series_id == "LNS11300060" ~ "All",
+                         series_id == "LNS11300061" ~ "Men",
+                         series_id == "LNS11300062" ~ "Women"),
+         value = as.numeric(value)) %>% 
+  select(date, everything(), -footnote_codes, -year, -period, -series_id)
+```
+
+Graph over time with ggplot.
+
+```{r}
+
+labor_for_part_data %>% 
+  group_by(dem) %>%
+  #filter(date >= "1980-01-01") %>% 
+  ggplot(aes(x = date, y = value, color = dem, label = dem)) +
+  geom_rect(data = recessions.df, 
+            inherit.aes = F, 
+            aes(xmin = Peak, 
+                xmax = Trough, 
+                ymin = -Inf, 
+                ymax = +Inf), 
+            fill = 'darkgray', alpha = 0.5) +
+  geom_line()  +
+  scale_x_date(date_breaks = "5 years", 
+               date_labels = "%Y") +
+  #limits = c(ymd("1980-01-01"), ymd("2018-02-01"))) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10), 
+                     labels = function(x) paste0(x, "%"), 
+                     sec.axis = dup_axis()) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption=element_text(hjust=0)) +
+  ylab("") +
+  xlab("") +
+  ggtitle("Labor Force Participation Rate: Prime Working Age (25-54)", 
+          subtitle = "seasonally adjusted") +
+  labs(caption = "based on work by the inestimable @lenkiefer") 
+  
+``
+
