@@ -1,0 +1,55 @@
+---
+title: "Home Sales"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(httr)
+library(jsonlite)
+```
+
+
+From David Rosenburg: 
+The new home sales number, as bad as it was, was actually flattered by a 22% surge in spec buying. Actual sales of homes that were completed in July were detonated by 17%, and since March they have plunged at a 55% annual rate!
+
+```{r}
+test <- fromJSON("https://api.census.gov/data/timeseries/eits/ressales?get=cell_value,data_type_code,time_slot_id,error_data,category_code,seasonally_adj&for=us:*&time=from+2015-01&key=ed0d8732a88f640a0ee5e219f9ec11f2c53c5d5d") %>% 
+  as_tibble() %>% 
+  `colnames<-`(.[1,]) %>% 
+  slice(-1) %>% 
+  mutate(cell_value = as.numeric(cell_value))
+
+test %>% 
+  filter(category_code == "ASOLD" &
+         (data_type_code == "TOTAL" |
+         data_type_code == "E_TOTAL")) %>% 
+  select(date = time, cell_value, data_type_code) %>% 
+  mutate(date = parse_date_time(date, orders = "Ym")) %>% 
+  arrange(date) %>%
+  spread(data_type_code, cell_value) %>% 
+  mutate( up = qnorm(0.95, mean = TOTAL, sd = E_TOTAL/100*TOTAL),
+          down = qnorm(0.05, mean = TOTAL, sd = E_TOTAL/100*TOTAL)) %>% 
+  ggplot(aes(x = date, y = TOTAL)) +
+  geom_line(color = "cornflowerblue") + 
+  geom_ribbon(aes(x = date,ymin = down, ymax = up), fill = "pink", alpha = 0.5) +
+   theme_minimal()+
+    labs(x=NULL, y=NULL,
+         title="New Home Sales (Ths. SAAR)",
+         subtitle="shaded region denotes confidence interval",
+           caption="@lenkiefer Source: U.S. Census Bureau and U.S. Department of Housing and Urban Development")+
+    theme(plot.caption=element_text(hjust=0),
+          plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5))
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+

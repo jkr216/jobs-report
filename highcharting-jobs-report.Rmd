@@ -1,0 +1,290 @@
+---
+title: "Highcharting Jobs Friday"
+output:
+  html_notebook: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, comment = NA)
+
+library(tidyverse)
+library(tidyquant)
+#devtools::install_github("jbkunst/highcharter")
+library(highcharter)
+```
+
+In honor of last week's jobs report from the Bureau of Labor Statistics (BLS), today we will visualize jobs data with `ggplot2` and then, more extensively, with `highcharter`.  Our aim is to explore `highcharter` and its similarity with `ggplot`, and to create some nice interactive visualizations.  In the process, we will cover how to import BLS data from FRED and then wrangle it for visualization. We won't do any modeling or statistical analysis today, though it wouldn't be hard to extend this script into a forecasting exercise.  One nice thing about today's code flow is that it can be refreshed and updated on each BLS release date. 
+
+Let's get to it! 
+
+We will source our data from [FRED](https://fred.stlouisfed.org/) and will use the `tq_get()` function from `tidyquant` which enables us to import many data series at once and in tidy, `tibble` format. We want to get total employment numbers, ADP estimates, and the sector-by-sector numbers that make up total employment. Let's start by creating a `tibble` to hold the FRED codes and more intuitive names for each data series.
+
+```{r}
+
+codes_names_tbl <- tribble(
+        ~ symbol, ~ better_names,
+        "NPPTTL", "ADP Estimate",
+        "PAYEMS", "Nonfarm Employment",
+        "USCONS", "Construction",
+        "USTRADE",   "Retail/Trade",
+        "USPBS",  "Prof/Bus Serv",
+        "MANEMP",    "Manufact",
+        "USFIRE",    "Financial",
+        "USMINE",   "Mining",
+        "USEHS",    "Health Care",
+        "USWTRADE",    "Wholesale Trade",
+        "USTPU",    "Transportation",
+        "USINFO",    "Info Sys",
+        "USLAH",    "Leisure",
+        "USGOVT",    "Gov",
+        "USSERV",    "Other Services"
+)
+```
+
+Now we pass the `symbol` column to `tq_get()`.
+
+```{r}
+fred_empl_data <- 
+  tq_get(codes_names_tbl$symbol,                         
+         get = "economic.data",             
+         from = "1997-01-01")
+
+```
+
+We have our data but look at the `symbol` column. 
+
+```{r}
+fred_empl_data %>% 
+  group_by(symbol) %>% 
+  slice(1)
+```
+
+The symbols are the FRED codes, which are unrecognizable unless we or our end users have memorized how those codes map to the more intuitive names. Let's replace them with the `better_names` column of `codes_names_tbl`. We will do this with a `left_join()`, and it explains why I labeled our original column as `symbol` - it makes the `left_join()` easier. 
+Special thanks to [Jenny Bryan](https://twitter.com/JennyBryan) for pointing out this [code flow](http://stat545.com/bit008_lookup.html)! 
+
+
+```{r}
+
+fred_empl_data %>% 
+  left_join(codes_names_tbl, 
+            by = "symbol" ) %>% 
+  select(better_names, everything(), -symbol) %>% 
+  group_by(better_names) %>% 
+  slice(1) 
+
+```
+
+That looks much better, but we now have a column called `price`, that holds the monthly employment observations, and a column called `better_names`, that holds the more intuitive group names. Let's change those column names to `employees` and `sector`.
+
+```{r}
+fred_empl_data <- 
+fred_empl_data %>% 
+  left_join(codes_names_tbl, 
+            by = "symbol" ) %>% 
+  select(better_names, everything(), -symbol) %>% 
+  rename(employees = price, sector = better_names)
+
+head(fred_empl_data)
+```
+
+`fred_empl_data` has the names and organization we want, but it still has the raw number of employees per month.  We want to visualize the month-to-month *change* in jobs numbers, which means we need to perform a calculation on our data and store it in a new column. To do so, we use `mutate()` to create the new column and calculate monthly change with `value - lag(value, 1)`. We are not doing any annualizing or seasonality work here - it's a simple substraction. For yearly change, it would be  `value - lag(value, 12)`.
+
+```{r}
+
+empl_monthly_change <- 
+  fred_empl_data  %>% 
+  group_by(sector) %>% 
+  mutate(monthly_change = employees - lag(employees, 1)) %>% 
+  na.omit()
+
+```
+
+Our final data object `empl_monthly_change` is tidy, has intuitive names in the group column and has the monthly change that we wish to visualize. Let's build some charts.
+
+We will start at the top and use `ggplot` to visualize how total non-farm employment (sorry farmers, your jobs don't count I guess) has changed since 2007. We want an end user to quickly glance at the chart and find the months with positive jobs growth and negative jobs growth. That means we want months with positive jobs growth to be one color and those with negative jobs growth to be another color. There is more than one way to accomplish this but I like to create new columns and then add `geoms` based on those columns. Check out [this post](http://lenkiefer.com/2018/03/11/charting-jobs-friday-with-r/) by Freddie Mac's Len Kiefer for another way to accomplish this by nesting `ifelse` statements in `ggplot's` aesthetics. (In fact, if you like data visualization, check out all the stuff that Len writes.)
+
+Let's walk through how to create columns for shading by positive or negative jobs growth. First, we are looking at total employment here, so we call `filter(sector == "Nonfarm Employment")` to get only total employment.
+
+Next, we create two new columns with `mutate()`.  The first is called `col_pos` and is formed by `if_else(monthly_change > 0, monthly_change,...)`.  That logic is creating column that holds the value of monthly change if monthly change is positive, else it holds NA.  We then create another column called `col_neg` using the same logic. 
+
+```{r}
+empl_monthly_change %>% 
+  filter(sector == "Nonfarm Employment") %>% 
+   mutate(col_pos = 
+           if_else(monthly_change > 0, 
+                  monthly_change, as.numeric(NA)),
+         col_neg = 
+           if_else(monthly_change < 0, 
+                  monthly_change, as.numeric(NA))) %>% 
+  dplyr::select(sector, date, col_pos, col_neg) %>% 
+  head()
+```
+
+Have a quick look at the `col_pos` and `col_neg` columns and make sure they look right. `col_pos` should have only positive and NA values, `col_neg` shoud have only negative and NA values.
+
+Now we can visualize our monthly changes with `ggplot`, adding a separate `geom` for those new columns.
+
+```{r}
+empl_monthly_change %>% 
+  filter(sector == "Nonfarm Employment") %>% 
+   mutate(col_pos = 
+           if_else(monthly_change > 0, 
+                  monthly_change, as.numeric(NA)),
+         col_neg = 
+           if_else(monthly_change < 0, 
+                  monthly_change, as.numeric(NA))) %>%
+  ggplot(aes(x = date)) +
+  geom_col(aes(y = col_neg),
+               alpha = .85,
+               fill = "pink",
+               color = "pink") +
+  geom_col(aes(y = col_pos),
+               alpha = .85,
+               fill = "lightgreen",
+               color = "lightgreen") +
+  ylab("Monthly Change (thousands)") +
+  labs(title = "Monthly Private Employment Change",
+       subtitle = "total empl, since 2008",
+       caption = "inspired by @lenkiefer") +
+  scale_x_date(breaks = scales::pretty_breaks(n = 10)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust=0))
+```
+
+That plot is nice but it's static! Hover on it and you'll see what I mean. 
+
+Let's head to `highcharter` and create an interactive chart that responds when we hover on it. By way of brief background, `highcharter` is an R hook into the fantastic [highcharts](www.highcharts.com) JavaScript library. One nice feature fo `highcharter` is that we can use very similar aesthetic logic to what we used for `ggplot`. It's not identical but it's similar and let's us work with tidy data.
+
+Before we get to the `highcharter` logic, we will add one column to our `tibble` to hold the color scheme for our positive and negative monthly changes. Notice how this is different from the `ggplot` flow above where we create one column to hold our positive changes for coloring and one column to hold our negative changes for coloring.
+
+I want to color positive changes light blue and negative changes pink and can put the [rgb](https://www.w3schools.com/colors/colors_picker.asp) codes for those colors directly in the new column. The rgb code for light blue is "#6495ed" and for pink is "#ffe6ea". Thus we use `ifelse` to create a column called `color_of_bars` that holds "#6495ed" (light blue) when `monthly_change` is postive and "#ffe6ea" (pink) when it's negative.   
+
+```{r}
+total_employ_hc <- 
+  empl_monthly_change %>% 
+  filter(sector == "Nonfarm Employment") %>% 
+  mutate(color_of_bars = ifelse(monthly_change > 0, "#6495ed", "#ffe6ea"))
+
+head(total_employ_hc)
+```
+
+Now we are ready to start the `highcharter` flow. 
+
+We start by calling `hchart` to pass in our data object. Note the similarity to `ggplot` where we started with `ggplot`.
+
+Now, intead of waiting for a call to `geom_col`, we set `type = "column"` to let `hchart` know that we are building a column chart.   Next, we use `hcaes(x = date, y = monthly_change, color = color_of_bars)` to specify our aesthetics.  Notice how we can control the colors of the bars from values in the `color_of_bars` column.
+
+We also supply a `name = "monthly change"` because we want `monthly change` to appear when a user hovers on the chart. That wasn't a consideration with `ggplot`.
+
+```{r}
+hchart(total_employ_hc,  
+                type = "column", 
+                pointWidth = 5,
+                hcaes(x = date,
+                      y = monthly_change,
+                      color = color_of_bars),
+                name = "monthly change") %>%
+  hc_title(text = "Monthly Employment Change") %>%
+  hc_xAxis(type = "datetime") %>%
+  hc_yAxis(title = list(text = "monthly change (thousands)")) %>%
+  hc_exporting(enabled = TRUE)
+```
+
+
+Let's stay in the `highcharter` world and visualize how each sector changed in the most recent month, which is July of 2018. 
+
+First, we isolate the most recent month by filtering on the last date. We also don't want the ADP Estimate and filter that out as well.
+
+```{r}
+empl_monthly_change %>% 
+filter(date == (last(date))) %>%
+filter(sector != "ADP Estimate")
+```
+
+That filtered flow has the data we want, but we have two more tasks. First, we want to `arrange` this data so that it goes from smallest to largest. If we did not do this, our chart would still "work", but the column heights would not progress from lowest to highest.
+
+Second, we need to create another column to hold colors for negative and positive values, with the same `ifelse()` logic as we used before.
+
+
+```{r}
+  
+emp_by_sector_recent_month <- 
+  empl_monthly_change  %>% 
+  filter(date == (last(date))) %>%
+  filter(sector != "ADP Estimate") %>% 
+  arrange(monthly_change) %>% 
+  mutate(color_of_bars = if_else(monthly_change > 0, "#6495ed", "#ffe6ea"))
+```
+
+Now we pass that object to `hchart`, set `type = "column"` and choose our `hcaes` values. We want to label the x-axis with the different sectors and do that with `hc_xAxis(categories = emp_by_sector_recent_month$sector)`.
+
+```{r}
+
+last_month <- lubridate::month(last(empl_monthly_change$date),
+                                 label = TRUE, 
+                                 abbr = FALSE)
+
+hchart(emp_by_sector_recent_month,  
+                type = "column", 
+                pointWidth = 20,
+                hcaes(x = sector,
+                      y = monthly_change,
+                      color = color_of_bars),
+                showInLegend = FALSE) %>% 
+  hc_title(text = paste(last_month, "Employment Change", sep = " ")) %>%
+  hc_xAxis(categories = emp_by_sector_recent_month$sector) %>%
+  hc_yAxis(title = list(text = "Monthly Change (thousands)"))
+```
+
+Finally, let's compare the ADP Estimates to the actual Nonfarm payroll numbers since 2017. We start with filtering again.   
+
+```{r}
+adp_bls_hc <- 
+  empl_monthly_change %>% 
+  filter(sector == "ADP Estimate" | sector == "Nonfarm Employment") %>% 
+  filter(date >= "2017-01-01")
+```
+
+We create a column to hold different colors, but our logic is not whether a reading is positive or negative. We want to color the ADP and BLS reports differently. 
+
+```{r}
+adp_bls_hc <- 
+  adp_bls_hc %>% 
+  mutate(color_of_bars = 
+           ifelse(sector == "ADP Estimate", "#ffb3b3", "#4d94ff"))
+
+head(adp_bls_hc)
+tail(adp_bls_hc)
+```
+
+And now we pass that object to our familiar `hchart` flow.
+
+```{r}
+hchart(adp_bls_hc, 
+       type = 'column', 
+       hcaes(y = monthly_change,
+             x = date,
+             group = sector, 
+             color = color_of_bars),
+       showInLegend = FALSE
+       ) %>% 
+  hc_title(text = "ADP v. BLS") %>%
+  hc_xAxis(type = "datetime") %>%
+  hc_yAxis(title = list(text = "monthly change (thousands)")) %>%
+  hc_add_theme(hc_theme_flat()) %>%
+  hc_exporting(enabled = TRUE)
+```
+
+That's all for today. Try revisiting this script on September 7th, when the next BLS jobs data is released, and see if any new visualizations or code flows come to mind.
+
+See you next time and happy coding!
+
+
+
+

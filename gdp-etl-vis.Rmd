@@ -1,0 +1,792 @@
+---
+title: "GDP Postgres sql"
+output: html_notebook
+---
+
+- build a well known data vis, that helps to confirm if you're right
+- tons of econ teams will be talking about this 4 times per year, if something creative strikes you, you have the foundation to start with this well known chart, and expand
+- go to the source; good practice; why not?, why depend or wait for FRED? 
+- you'll find other cool stuff from taht provider, a primer on GDP, the components
+- it's, again, good practice for when FRED or quandl or tidyquant or quantmod hasn't wrapped it for you, like if you're trying to pull together different internal data to create a unique data set. you don't want that to be the first time you've wrestled with data import and wrangling
+- can use with other data sets; see employment data post
+- plunk it into a sql database for safekeeping
+
+
+```{r setup, include = FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, comment = NA)
+library(tidyverse)
+library(tidyquant)
+library(highcharter)
+library(timetk)
+library(tibbletime)
+library(formattable)
+library(blastula)
+
+
+library(config)
+library(dbplyr)
+library(DBI)
+library(odbc)
+library(htmltools)
+
+dw <- config::get("postgresql")
+
+con <- DBI::dbConnect(odbc::odbc(),
+                      Driver = dw$Driver,
+                      Server = dw$Server,
+                      #Host = dw$Host,
+                      UID    = dw$UID,
+                      PWD    = dw$PWD,
+                      Port   = dw$Port,
+                      Database = dw$Database
+                      #Schema = dw$Schema
+                      )
+
+
+
+```
+
+### Download gdp level excel from BEA
+
+```{r}
+url <- "https://www.bea.gov/national/Release/XLS/Survey/Section1All_xls.xlsx"
+destfile <- "Section1All_xls.xlsx"
+curl::curl_download(url, destfile)
+gdp_change <- 
+  read_excel("Section1All_xls.xlsx", 
+             sheet = "T10101-Q",
+             skip = 7) %>% 
+  dplyr::select(-Line, -X__2) %>% 
+  rename(account = X__1) %>% 
+  filter(account == "Gross domestic product") %>%
+  t() %>% 
+  `colnames<-`(.[1,]) %>% 
+  # conver the rownames into a column
+  # and ponder why we would ever want rownames instead of a column? 
+  as_tibble(rownames = "quarter") %>% 
+  # delete the first row
+  slice(-1) %>% 
+  # convert the quarter column into a date format
+  mutate(quarter = as.yearqtr(quarter)) %>% 
+  # convert to numberics
+  mutate_if(is.character, funs(as.numeric(.)))
+
+DBI::dbWriteTable(con, "gdp_change", gdp_change)
+
+gdp_change_from_postrgres <-
+  tbl(con, "gdp_change") %>% 
+  collect() %>% 
+  mutate(quarter = as.yearqtr(quarter),
+  quarter = yq(quarter)) %>% 
+  filter(quarter >= "1997-01-01") %>% 
+  rename(percent_change = "Gross domestic product") 
+```
+
+```{r}
+gdp_change_from_postrgres %>%
+mutate(col_blue = 
+           if_else(percent_change > 0, 
+                  percent_change, as.numeric(NA)),
+         col_red = 
+           if_else(percent_change < 0, 
+                  percent_change, as.numeric(NA))) %>%
+  ggplot(aes(x = quarter)) +
+  geom_col(aes(y = col_red),
+               alpha = .85, 
+               fill = "pink", 
+               color = "pink") +
+  geom_col(aes(y = col_blue),
+               alpha = .85, 
+               fill = "cornflowerblue", 
+               color = "cornflowerblue") +
+  ylab("Monthly Change (thousands)") +
+  scale_y_continuous(labels = scales::percent,
+                     breaks = scales::pretty_breaks(n = 10)) +
+  #scale_x_date(breaks = scales::pretty_breaks(n = 10)) +
+  labs(title = "Quarterly GDP Growth",
+       subtitle = "since 1998",
+       caption = "more here: www.bea.gov/newsreleases/national/gdp/gdpnewsrelease.htm") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption=element_text(hjust=0))
+```
+
+```{r}
+gdp_change_hc <- 
+  gdp_change_from_postrgres %>% 
+  mutate(coloract = ifelse(percent_change > 0, "#6495ed", "#ffe6ea"),
+         percent_change = formattable::percent(round(percent_change, 2)))
+
+
+highchart() %>%
+  hc_title(text = paste("GDP quarterly growth since", 
+                        lubridate::month(first(gdp_change_hc$quarter),
+                                         label = TRUE,
+                                         abbr = FALSE),
+                         lubridate::year(first(gdp_change_hc$quarter)), 
+                        sep = " ")) %>%
+  hc_add_series(gdp_change_hc,  
+                "column", 
+                pointWidth = 5,
+                hcaes(x = quarter,
+                      y = percent_change,
+                      color = coloract),
+                name = "gdp quarterly change") %>% 
+  hc_xAxis(type = "datetime") %>% 
+  hc_exporting(enabled = TRUE) %>%
+  hc_yAxis(labels = list(format = "{value}%")) %>%
+  hc_tooltip(pointFormat = '{point.y:.2f}%')
+
+```
+
+
+```{r}
+
+# library(readxl)
+# url <- "https://www.bea.gov/system/files/2018-08/gdplev_0.xlsx"
+# destfile <- "gdplev_0.xlsx"
+# curl::curl_download(url, destfile)
+# gdplev_0 <- read_excel(destfile, col_types = c("skip", 
+#     "skip", "skip", "skip", "text", "numeric", 
+#     "numeric"), skip = 4) %>% 
+#   slice(-1:-2) %>% 
+#   rename(GDP_current_dollars = `GDP in billions of current dollars`,
+#          GDP_2012_dollars = `GDP in billions of chained 2012 dollars`,
+#          quarter = `X__1`)
+
+#DBI::dbRemoveTable(con, "gdplev_0")
+#DBI::dbWriteTable(con, "gdplev_0", gdplev_0)
+
+```
+
+### Calculate quarterly growth
+
+```{r}
+# gdp_quarterly_growth <- 
+#   gdp_quarterly_from_postrgres %>%
+#   mutate(percent_change_current = 
+#            ((1+ (GDP_current_dollars-lag(GDP_current_dollars, 1))/
+#                lag(GDP_current_dollars, 1))^4) - 1,
+#          percent_change_2012 = 
+#            ((1+ (GDP_2012_dollars-lag(GDP_2012_dollars, 1))/
+#                lag(GDP_2012_dollars, 1))^4) - 1,
+#          quarter = yq(quarter)) %>% 
+#   filter(quarter > "1997-10-01") %>%
+#   na.omit()
+```
+
+### Vis with ggplot
+```{r}
+gdp_quarterly_growth %>% 
+mutate(col_blue = 
+           if_else(percent_change_2012 > 0, 
+                  percent_change_2012, as.numeric(NA)),
+         col_red = 
+           if_else(percent_change_2012 < 0, 
+                  percent_change_2012, as.numeric(NA))) %>%
+  ggplot(aes(x = quarter)) +
+  geom_col(aes(y = col_red),
+               alpha = .85, 
+               fill = "pink", 
+               color = "pink") +
+  geom_col(aes(y = col_blue),
+               alpha = .85, 
+               fill = "cornflowerblue", 
+               color = "cornflowerblue") +
+  ylab("Monthly Change (thousands)") +
+  scale_y_continuous(labels = scales::percent,
+                     breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_date(breaks = scales::pretty_breaks(n = 10)) +
+  labs(title = "Quarterly GDP Growth",
+       subtitle = "since 1998",
+       caption = "more here: www.bea.gov/newsreleases/national/gdp/gdpnewsrelease.htm") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption=element_text(hjust=0))
+```
+
+### Visualize GDP growth with highcharter
+
+
+```{r}
+gdp_quarterly_growth_hc <- 
+  gdp_quarterly_growth %>% 
+  mutate(coloract = ifelse(percent_change_2012 > 0, "#6495ed", "#ffe6ea"),
+         percent_change_2012 = formattable::percent(round(percent_change_2012 * 100, 2)))
+
+
+highchart() %>%
+  hc_title(text = paste("GDP quarterly growth since", 
+                        lubridate::month(first(gdp_quarterly_growth_hc$quarter),
+                                         label = TRUE,
+                                         abbr = FALSE),
+                         lubridate::year(first(gdp_quarterly_growth_hc$quarter)), 
+                        sep = " ")) %>%
+  hc_add_series(gdp_quarterly_growth_hc,  
+                "column", 
+                pointWidth = 5,
+                hcaes(x = quarter,
+                      y = percent_change_2012,
+                      color = coloract),
+                name = "gdp quarterly change") %>% 
+  hc_xAxis(type = "datetime") %>% 
+  hc_exporting(enabled = TRUE) %>%
+  hc_yAxis(labels = list(format = "{value}%")) %>%
+  hc_tooltip(pointFormat = "{point.y:.1f}%")
+
+```
+
+
+### GDP components
+
+
+```{r}
+url <- "https://www.bea.gov/national/Release/XLS/Survey/Section1All_xls.xlsx"
+destfile <- "Section1All_xls.xlsx"
+curl::curl_download(url, destfile)
+gdp_test <- 
+  read_excel("Section1All_xls.xlsx", 
+             sheet = "T10101-Q",
+             skip = 7) %>% 
+  dplyr::select(-Line, -X__2) %>% 
+  rename(account = X__1) %>% 
+  filter(account == "Gross domestic product") %>%
+  t() %>% 
+  `colnames<-`(.[1,]) %>% 
+  # conver the rownames into a column
+  # and ponder why we would ever want rownames instead of a column? 
+  as_tibble(rownames = "quarter") %>% 
+  # delete the first row
+  slice(-1) %>% 
+  # convert the quarter column into a date format
+  mutate(quarter = as.yearqtr(quarter)) %>% 
+  # convert to numberics
+  mutate_if(is.character, funs(as.numeric(.))) 
+gdp_test %>% tail()
+```
+
+
+Let's download the excel file from the BEA website and specify our sheet. We want the sheet which contains the quarterly change of the GDP components. That is Table 1.1.2-Q, which turns out to be called `sheet = "T10102-Q"` in the excel file.
+
+```{r}
+url <- "https://www.bea.gov/national/Release/XLS/Survey/Section1All_xls.xlsx"
+destfile <- "Section1All_xls.xlsx"
+curl::curl_download(url, destfile)
+gdp_component_change_quarterly <- 
+  read_excel("Section1All_xls.xlsx", 
+             sheet = "T10102-Q",
+             col_types = c("skip", 
+        "text", "skip", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric"), skip = 6) %>% 
+  slice(-1) %>% 
+  slice(-2)
+
+```
+
+
+### Wrangle and transform
+
+The data arrived with the variables as rows and each column as a quarter - that's why it is 286 variables wide. It's not an uncommon way for economic data to be organized but it's definitely not tidy. We want to reorganize the data so that there is a column for the date and for each economic variable that contributes to GDP.
+
+```{r}
+
+ gdp_comp_change_wrangled <- 
+  # transpose the data
+  t(gdp_component_change_quarterly) %>% 
+  # make row 1 into column names
+  `colnames<-`(.[1,]) %>% 
+  # conver the rownames into a column
+  # and ponder why we would ever want rownames instead of a column? 
+  as_tibble(rownames = "quarter") %>% 
+  # delete the first row
+  slice(-1) %>% 
+  # convert the quarter column into a date format
+  mutate(quarter = as.yearqtr(quarter)) %>% 
+  # convert to numberics
+  mutate_if(is.character, funs(as.numeric(.)))
+
+
+DBI::dbRemoveTable(con, "gdp_comp_change_wrangled")
+DBI::dbWriteTable(con, "gdp_comp_change_wrangled", gdp_comp_change_wrangled)
+```
+
+
+
+```{r}
+
+gdp_comp_change_wrangled %>% 
+  dplyr::select(quarter, 
+                GDP = `Gross domestic product`, 
+                consumption = `Personal consumption expenditures`, 
+                investment =  `Gross private domestic investment`, 
+                net_exports = `Net exports of goods and services`, 
+                government = `Government consumption expenditures and gross investment`) %>% 
+  # test for consistency
+  mutate(gdp_change = rowSums(select_(., -1, -2))) %>% 
+  dplyr::select(quarter, gdp_change, everything()) 
+```
+
+Let's grab just the top level components first. If you forgot to bring your Macro text book, thats personal consumption/expenditure, net exports and good ol'government. 
+
+```{r}
+gdp_top_level_components <-
+  gdp_comp_change_wrangled %>% 
+  dplyr::select(quarter, 
+                GDP = `Gross domestic product`, 
+                consumption = `Personal consumption expenditures`, 
+                investment =  `Gross private domestic investment`, 
+                net_exports = `Net exports of goods and services`, 
+                government = `Government consumption expenditures and gross investment`) %>%  
+  gather(account, quarterly_change, -quarter) %>% 
+  group_by(account)
+
+gdp_top_level_components %>% slice(1:2)
+```
+
+Alright, we have the quarterly change to total GDP, and to each of its consituents. Let's visualize just the most recent quarter.
+
+```{r}
+gdp_top_level_components %>% 
+  filter(quarter == last(quarter)) %>% 
+   mutate(col_blue = 
+           if_else(quarterly_change > 0, 
+                  quarterly_change, as.numeric(NA)),
+         col_red = 
+           if_else(quarterly_change < 0, 
+                  quarterly_change, as.numeric(NA))) %>%
+  ggplot(aes(x = reorder(account, quarterly_change))) +
+  geom_col(aes(y = col_red),
+               alpha = .85, 
+               fill = "pink", 
+               color = "pink",
+               width = .5) +
+  geom_col(aes(y = col_blue),
+               alpha = .85, 
+               fill = "cornflowerblue", 
+               color = "cornflowerblue",
+               width = .5) +
+  labs(title = paste(last(gdp_top_level_components$quarter), 
+                     "GDP Change", 
+                     sep = " "),
+       subtitle = "by account, and total", 
+       x = "account", 
+       y = "change last quarter") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10))
+  
+```
+
+```{r}
+gdp_top_level_hc <- 
+  gdp_top_level_components  %>% 
+  filter(quarter == (last(quarter))) %>%
+  arrange(quarterly_change) %>% 
+  mutate(coloract = if_else(quarterly_change > 0, "#6495ed", "#ffe6ea"))
+
+
+
+highchart() %>%
+  hc_add_series(gdp_top_level_hc,  
+                "column", 
+                pointWidth = 20,
+                hcaes(x = account,
+                      y = quarterly_change,
+                      color = coloract),
+                showInLegend = FALSE) %>% 
+  hc_title(text = paste(last(gdp_top_level_hc$quarter), 
+                        "GDP Change", 
+                        sep = " ")) %>%
+  hc_xAxis(categories = gdp_top_level_hc$account) %>%
+  hc_xAxis(title = list(text = "account")) %>% 
+  hc_yAxis(title = list(text = "Monthly Change (percent)")) %>% 
+  hc_exporting(enabled = TRUE) %>%
+  hc_yAxis(labels = list(format = "{value}%")) %>%
+  hc_tooltip(pointFormat = "{point.y:.1f}%")
+
+```
+
+
+
+### Break down to second level and confirm
+
+Alright, let's go to the second level components of GDP and identify what contributed to the top level changes that we see above.
+
+
+```{r}
+  gdp_comp_change_wrangled %>% 
+  dplyr::select(quarter, 
+                `Gross domestic product`, 
+                `Goods`, 
+                `Services`, 
+                `Fixed investment`, 
+                `Change in private inventories`, 
+                `Exports`, 
+                `Imports`, 
+                `Federal`, 
+                `State and local`) %>%
+  # take the row sums of all excpet the first two columns
+  # we exclude those because are the date and total gdp change
+  mutate(gdp_change = rowSums(select_(., -1, -2))) %>% 
+  dplyr::select(quarter, gdp_change, everything()) %>% 
+  tail()
+```
+
+```{r}
+gdp_second_level_components <-
+  gdp_comp_change_wrangled %>%
+  dplyr::select(quarter, 
+                GDP = `Gross domestic product`,
+                goods = `Goods`, 
+                services = `Services`, 
+                fixed_inv = `Fixed investment`, 
+                private_inventory = `Change in private inventories`, 
+                exports = `Exports`, 
+                imports = `Imports`, 
+                federal = `Federal`, 
+                state_local = `State and local`) %>%
+  gather(account, quarterly_change, -quarter) %>% 
+  group_by(account) 
+
+gdp_second_level_components %>% 
+  filter(quarter == last(quarter)) %>% 
+   mutate(col_blue = 
+           if_else(quarterly_change > 0, 
+                  quarterly_change, as.numeric(NA)),
+         col_red = 
+           if_else(quarterly_change < 0, 
+                  quarterly_change, as.numeric(NA))) %>%
+  ggplot(aes(x = reorder(account, quarterly_change))) +
+  geom_col(aes(y = col_red),
+               alpha = .85, 
+               fill = "pink", 
+               color = "pink",
+               width = .5) +
+  geom_col(aes(y = col_blue),
+               alpha = .85, 
+               fill = "cornflowerblue", 
+               color = "cornflowerblue",
+               width = .5) +
+  labs(title = paste(last(gdp_top_level_components$quarter), 
+                     "GDP Change Second Level", 
+                     sep = " "),
+       subtitle = "by account, and total", 
+       x = "account", 
+       y = "change last quarter") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10),
+                     labels = function(x) paste0(x, "%"))
+```
+
+
+```{r}
+gdp_second_level_hc <- 
+  gdp_second_level_components  %>% 
+  filter(quarter == (last(quarter))) %>%
+  arrange(quarterly_change) %>% 
+  mutate(coloract = if_else(quarterly_change > 0, "#6495ed", "#ffe6ea"))
+
+highchart() %>%
+  hc_title(text = paste(last(gdp_second_level_hc$quarter), 
+                        "GDP Change", 
+                        sep = " ")) %>%
+  hc_add_series(gdp_second_level_hc,  
+                "column", 
+                pointWidth = 20,
+                hcaes(x = account,
+                      y = quarterly_change,
+                      color = coloract),
+                showInLegend = FALSE) %>% 
+  hc_xAxis(categories = gdp_second_level_hc$account) %>%
+  hc_xAxis(title = list(text = "account")) %>% 
+  hc_yAxis(title = list(text = "Monthly Change (percent)")) %>% 
+  hc_exporting(enabled = TRUE) %>%
+  hc_yAxis(labels = list(format = "{value}%")) %>%
+  hc_tooltip(pointFormat = "{point.y:.1f}%")
+
+```
+
+Private inventory was down, exports, goods and services were up 
+
+### Break down to third/fourth level and confirm
+
+Let's take it to the next level! 
+
+```{r}
+  gdp_comp_change_wrangled %>% 
+  dplyr::select(quarter, 
+                GDP = `Gross domestic product`,
+                # Goods
+                durables = `Durable goods`, 
+                nondurables = `Nondurable goods`, 
+                services = `Services`, 
+                # Fixed Investment
+                # `Nonresidential`,
+                structures = `Structures`,
+                equipent = `Equipment`,
+                IP = `Intellectual property products`,
+                residential = `Residential`, 
+                private_inventory = `Change in private inventories`, 
+                # Exports
+                export_goods = `Goods1`,
+                export_services = `Services1`,
+                # Imports
+                import_goods = `Goods2`,
+                import_services = `Services2`,
+                # Federal
+                defense = `National defense`,
+                nondefense = `Nondefense`,
+                state_local = `State and local`) %>%
+  mutate(gdp_change = rowSums(select_(., -1, -2))) %>% 
+  dplyr::select(quarter, gdp_change, everything()) %>% 
+  tail()
+```
+
+```{r}
+gdp_third_level_components <- 
+  gdp_comp_change_wrangled %>% 
+  dplyr::select(quarter, 
+                GDP = `Gross domestic product`,
+                # Goods
+                durables = `Durable goods`, 
+                nondurables = `Nondurable goods`, 
+                services = `Services`, 
+                # Fixed Investment
+                # `Nonresidential`,
+                structures = `Structures`,
+                equipment = `Equipment`,
+                IP = `Intellectual property products`,
+                residential = `Residential`, 
+                private_inventory = `Change in private inventories`, 
+                # Exports
+                export_goods = `Goods1`,
+                export_services = `Services1`,
+                # Imports
+                import_goods = `Goods2`,
+                import_services = `Services2`,
+                # Federal
+                defense = `National defense`,
+                nondefense = `Nondefense`,
+                state_local = `State and local`) %>% 
+  gather(account, quarterly_change, -quarter) %>% 
+  group_by(account)
+```
+
+
+```{r}
+gdp_third_level_hc <- 
+  gdp_third_level_components  %>% 
+  filter(quarter == (last(quarter))) %>%
+  arrange(quarterly_change) %>% 
+  mutate(coloract = if_else(quarterly_change > 0, "#6495ed", "#ffe6ea"))
+
+
+highchart() %>%
+  hc_title(text = paste(last(gdp_third_level_hc$quarter), 
+                        "GDP Change", 
+                        sep = " ")) %>%
+  hc_subtitle(text = "by component") %>% 
+  hc_add_series(gdp_third_level_hc,  
+                "column", 
+                pointWidth = 20,
+                hcaes(x = account,
+                      y = quarterly_change,
+                      color = coloract),
+                showInLegend = FALSE) %>% 
+  hc_xAxis(categories = gdp_third_level_hc$account) %>%
+  hc_xAxis(title = list(text = "account")) %>% 
+  hc_yAxis(title = list(text = "Monthly Change (percent)")) %>% 
+  hc_exporting(enabled = TRUE) %>%
+  hc_yAxis(labels = list(format = "{value}%")) %>%
+  hc_tooltip(pointFormat = "{point.y:.1f}%")
+
+```
+
+We can see that exports of goods increased quite a bit, whilst exports of services didn't. That jibes somewhat with reports that companies 'got ahead' of a possible tariff tit-for-tat by bringing exports forward. It's harder to shift the timing of export of services, afterall. 
+Okay, we confirmed that the data sum how it's supposed to, and speaking for myself, I got a bit more familiar with GDP. There's something about decomposing and re-wrangling data that makes it unforgettable or at least less forgettable. If someone asks what nonresidental fixed investment? it will immediately trigger the pain spent recoding this stuff - but at least I might remember the answer. 
+
+
+### GDP over time
+
+```{r}
+gdp_top_level_components %>% 
+  filter(quarter >= 1998) %>%
+  filter(account != "GDP") %>% 
+  ggplot(aes(x = quarter, y = quarterly_change, color = account)) +
+  geom_line() +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10), 
+                     labels = function(x) paste0(x, "%")) +
+  labs(title = "Change in GDP components",
+       y = "") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+  
+```
+
+### Highcharter with tidy objects
+
+```{r}
+
+gdp_top_level_components_1980 <-  
+  gdp_top_level_components %>% 
+  filter(quarter >= 1980) %>%
+  #filter(account != "GDP") %>% 
+  mutate(quarter = yq(quarter))
+```
+
+```{r}
+
+hchart(gdp_top_level_components_1980, 
+       type = 'line', 
+       hcaes(y = quarterly_change,
+             x = quarter,
+             group = account)) %>% 
+  hc_title(text = "GDP Component Contribution to GDP") %>% 
+  hc_xAxis(type = 'datetime',
+                 plotBands = list(
+                   list(
+                     label = list(text = "Bush Sr."),
+                     color = "rgba(100, 0, 0, 0.1)",
+                     from = datetime_to_timestamp(as.Date('1990-07-01', tz = 'UTC')),
+                     to = datetime_to_timestamp(as.Date('1991-03-01', tz = 'UTC'))
+                     ),
+                   list(
+                     label = list(text = "Dot Com"),
+                     color = "rgba(100, 0, 0, 0.1)",
+                     from = datetime_to_timestamp(as.Date('2001-03-01', tz = 'UTC')),
+                     to = datetime_to_timestamp(as.Date('2001-11-01', tz = 'UTC'))
+                     ),
+                   list(
+                     label = list(text = "Fin Crisis"),
+                     color = "rgba(100, 0, 0, 0.1)",
+                     from = datetime_to_timestamp(as.Date('2007-12-01', tz = 'UTC')),
+                     to = datetime_to_timestamp(as.Date('2009-06-01', tz = 'UTC'))
+                     ),
+                   list(
+                     label = list(text = "Volker Fed"),
+                     color = "rgba(100, 0, 0, 0.1)",
+                     from = datetime_to_timestamp(as.Date('1981-07-01', tz = 'UTC')),
+                     to = datetime_to_timestamp(as.Date('1982-11-01', tz = 'UTC'))
+                     )
+                   )
+               ) %>% 
+  hc_yAxis(labels = list(format = "{value}%")) %>%
+  hc_tooltip(pointFormat = "{point.y:.1f}%") %>% 
+  hc_add_theme(hc_theme_flat()) %>%
+  hc_navigator(enabled = FALSE) %>% 
+  hc_scrollbar(enabled = FALSE) %>% 
+  hc_legend(enabled = TRUE) %>% 
+  hc_exporting(enabled = TRUE)
+```
+
+Look at the red line (investment) and the black line (net exports) and the yellow line (consumption). This is why econs like @DavidKelly @jpmorgan say a trade war is the biggest risk. We are just nowhere near a recession right now, unless one of these lines starts to plunge. The purple is government and that tends not to fluctuate much, plus it hasn't made much of a positive contribution since 2009. The yellow, personal consumption, contributed 2.7% last quarter. Investment in fixed assets was about flat. Net exports contributed 1.1%, a largish number. So, where's the risk? Remember, a recession, the green line, has to go below zero for two straight quarters. And it's on the rise. 
+
+
+Massive thing to keep in mind. 'Investment' is not investment in the stock market. It's
+Gross private domestic investment consists of purchases
+of fixed assets (structures, equipment, and intellectual
+property products) by private **businesses** ... of **purchases of homes** by households, and of
+private business investment in inventories. (emphasis mine) Source [here](https://www.bea.gov/national/pdf/nipa_primer.pdf)

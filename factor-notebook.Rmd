@@ -1,0 +1,95 @@
+---
+title: "Factor Notebook"
+output: html_notebook
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, messaage = FALSE, warning = FALSE, comment = NA)
+library(tidyverse)
+library(tidyquant)
+library(tibbletime)
+library(broom)
+```
+
+# Get the data
+
+```{r}
+combined_ts <- suppressMessages(read_csv("combined.ts.csv" )) %>% 
+  na.omit()
+```
+
+
+# Rolling Regression
+ 
+Create the rolling function
+```{r}
+rolling_lm <- rollify(.f = function(Asset, Growth, Value, Momentum, Size, ERP) {
+
+  lm(Asset ~ Growth + Value + Momentum + Size + ERP)
+
+},
+
+window = 36,
+
+unlist = FALSE)
+```
+
+Use the ` %>% ` operator to apply that rolling function to the data and look at the results. 
+
+```{r}
+combined_ts %>% 
+   mutate(rolling_model = 
+           rolling_lm(Fund, 
+                      US.Pure.Growth, 
+                      US.Pure.Value, 
+                      US.Pure.Momentum,
+                      US.Pure.Size,
+                      RMRF)) %>% 
+  # Why slice of 35 rows? It's a rolling model of size 36, so the first 35 are NA
+  slice(-1:-35) %>%
+  # look at just the datestamp and model results column
+  select(datestamp, rolling_model)  %>% 
+  head()
+```
+
+Look at the new column called rolling_model.
+It has the results of our rolling model, now we need to extract the results for that column. We do that with `tidy()` function from `broom`. But, remember, we are applying it iteratively to objects in a column called `rolling_model`, so we need to use `map()` to apply the `tidy()` function to that column. Then we `unnest()` the results.
+
+```{r}
+
+model_results <- 
+  combined_ts %>% 
+  mutate(rolling_model = 
+           rolling_lm(Fund, 
+                      US.Pure.Growth, 
+                      US.Pure.Value, 
+                      US.Pure.Momentum,
+                      US.Pure.Size,
+                      RMRF)) %>% 
+  mutate(tidied = map(rolling_model, 
+                      tidy, 
+                      conf.int = T)) %>% 
+  unnest(tidied) %>% 
+  # Slice off the NAs again
+  slice(-1:-35) %>% 
+  select(datestamp, term, estimate, conf.low, conf.high) %>% 
+  filter(term != "(Intercept)") %>% 
+  rename(beta = estimate, factor = term) %>% 
+  group_by(factor)
+
+model_results %>% 
+  head()
+```
+
+# Visualize results
+
+```{r}
+model_results %>% 
+  ggplot(aes(x = datestamp, 
+             y = beta, 
+             group = factor, 
+             color = factor)) +
+  geom_line()
+  
+```
+

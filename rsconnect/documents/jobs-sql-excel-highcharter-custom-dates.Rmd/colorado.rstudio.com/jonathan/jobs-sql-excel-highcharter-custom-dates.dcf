@@ -1,0 +1,12 @@
+name: jobs-sql-excel-highcharter-custom-dates
+title: jobs-sql-excel-highcharter-custom-dates
+username: jonathan
+account: jonathan
+server: colorado.rstudio.com
+hostUrl: https://colorado.rstudio.com/rsc/__api__
+appId: 2218
+bundleId: 25673
+url: https://colorado.rstudio.com:443/rsc/content/2218/
+when: 1556890835.94429
+asMultiple: FALSE
+asStatic: FALSE

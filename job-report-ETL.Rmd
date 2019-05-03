@@ -1,0 +1,436 @@
+---
+title: "Jobs Report ETL"
+output:
+  html_notebook: default
+resource_files:
+- config.yml
+---
+
+```{r setup, include = FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+library(tidyverse)
+library(tidyquant)
+library(jsonlite)
+library(httr)
+```
+
+### Import non farm payroll data
+
+```{r}
+fred_codes <- c(
+            "CIVPART", 
+            "EMRATIO",
+            "NROU",  
+            "UNRATE", 
+            "CES0500000003",
+            "AWHAETP",
+            "NPPTTL",
+            #"PAYEMS", 
+            "USCONS",
+            "USTRADE",
+            "USPBS",
+            "MANEMP",
+            "USFIRE",
+            "USMINE",
+            "USEHS",
+            "USWTRADE",
+            "CES4349300001",
+            "USINFO",
+            "USLAH",
+            "USGOVT",
+            "USSERV")
+            
+column_names <- c(
+            "date",
+            "Labor Force Part Rate",
+            "Employment-to-Pop Ratio",
+            "Nat Rate Unemployment",
+            "Unemployment Rate",
+            "Avg Hourly Earnings",
+            "Avg Weekly Hours",
+            "ADP Estimate",
+            #"Nonfarm Employment",
+            "Construction",
+            "Retail/Trade",
+            "Prof/Bus Serv",
+            "Manufact",
+            "Financial",
+            "Mining",
+            "Health Care",
+            "Wholesale Trade",
+            "Transportation",
+            "Info Sys",
+            "Leisure",
+            "Gov",
+            "Other Services")
+
+
+# download data via FRED 
+fred_empl_data_raw <- 
+  tq_get(fred_codes,                          
+         get = "economic.data",             
+         from = "1980-01-01") %>% 
+  spread(symbol, price) %>% 
+  select(date, fred_codes) %>% 
+  `colnames<-`(column_names)
+
+pay_ems_raw_1980_1999 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/CES0000000001?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1980&endyear=1999") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  simplify() %>% 
+  select(year, period, value) %>% 
+  unite("date", c("year", "period"), sep="-", remove = TRUE) %>% 
+  mutate(date = ymd(parse_date_time(date, "%Y%m")),
+         jobs = as.numeric(value)) %>% 
+  select(-value) %>% 
+  arrange(date)
+
+
+pay_ems_raw_2000_2019 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/CES0000000001?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=2000&endyear=2019") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  simplify() %>% 
+  select(year, period, value) %>% 
+  unite("date", c("year", "period"), sep="-", remove = TRUE) %>% 
+  mutate(date = ymd(parse_date_time(date, "%Y%m")),
+         jobs = as.numeric(value)) %>% 
+  select(-value) %>% 
+  arrange(date)
+
+pay_ems_raw <- 
+  pay_ems_raw_1980_1999 %>% 
+  bind_rows(pay_ems_raw_2000_2019)
+
+fred_empl_data <- 
+  fred_empl_data_raw %>% 
+  full_join(pay_ems_raw) %>% 
+  rename(`Nonfarm Employment` = jobs)
+
+fred_empl_data %>% 
+  select(date, `Nonfarm Employment`) %>% 
+  na.omit()
+```
+
+```{r}
+# bls_labor_for_data <-
+#   read_delim("https://download.bls.gov/pub/time.series/ln/ln.data.1.AllData",
+#              "\t",
+#              escape_double = FALSE,
+#              col_types = cols(
+#                value = col_character(),
+#                footnote_codes = col_skip()),
+#              trim_ws = TRUE,
+#              progress = FALSE) %>%
+#   filter(series_id == "LNS11300060"|
+#         series_id == "LNS11300061" |
+#         series_id == "LNS11300062") %>%
+#   mutate(date = parse_date_time(paste0(year, period), "%Y%m"),
+#          dem = case_when(series_id == "LNS11300060" ~ "All",
+#                          series_id == "LNS11300061" ~ "Men",
+#                          series_id == "LNS11300062" ~ "Women")) %>%
+#   select(date, everything(), -year, -period, -series_id) %>%
+#   mutate_all(., as.character)
+```
+
+```{r}
+bls_labor_for_all_1948_1959 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300060?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1948&endyear=1959") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>%
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "All") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+
+bls_labor_for_all_1960_1979 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300060?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1960&endyear=1979") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>%
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "All") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+
+bls_labor_for_all_1980_1999 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300060?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1980&endyear=1999") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>%
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "All") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+
+bls_labor_for_all_2000_2019 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300060?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=2000&endyear=2019") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>%
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "All") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+
+bls_labor_for_men_1948_1959 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300061?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1948&endyear=1959") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>% 
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "men") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+
+bls_labor_for_men_1960_1979 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300061?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1960&endyear=1979") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>% 
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "men") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+
+bls_labor_for_men_1980_1999 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300061?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1980&endyear=1999") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>% 
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "men") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+
+bls_labor_for_men_2000_2019 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300061?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=2000&endyear=2019") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>% 
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "men") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date) 
+
+bls_labor_for_women_1948_1959 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300062?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1948&endyear=1959") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>% 
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "women") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date) 
+
+bls_labor_for_women_1960_1979 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300062?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1960&endyear=1979") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>% 
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "women") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date) 
+
+bls_labor_for_women_1980_1999 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300062?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=1980&endyear=1999") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>% 
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "women") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date) 
+
+bls_labor_for_women_2000_2019 <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS11300062?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=2000&endyear=2019") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>% 
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         dem = "women") %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+```
+
+```{r}
+bls_labor_for_data <- 
+  bls_labor_for_all_1948_1959 %>% 
+  bind_rows(bls_labor_for_all_1960_1979) %>%
+  bind_rows(bls_labor_for_all_1980_1999) %>% 
+  bind_rows(bls_labor_for_all_2000_2019) %>% 
+  bind_rows(bls_labor_for_men_1948_1959) %>% 
+  bind_rows(bls_labor_for_men_1960_1979) %>% 
+  bind_rows(bls_labor_for_men_1980_1999) %>% 
+  bind_rows(bls_labor_for_men_2000_2019) %>%
+  bind_rows(bls_labor_for_women_1948_1959) %>%
+  bind_rows(bls_labor_for_women_1960_1979) %>% 
+  bind_rows(bls_labor_for_women_1980_1999) %>% 
+  bind_rows(bls_labor_for_women_2000_2019) %>% 
+  group_by(dem) %>% 
+  mutate_all(., as.character)
+    
+```
+
+```{r}
+# with calculations, but comes in list of list of tibbles
+# pay_ems <- 
+#   fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/CES0000000001?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&catalog=true&startyear=2000&endyear=2019&calculations=true") %>% 
+#   pluck("Results", "series", "data", 1) %>% 
+#   simplify() 
+
+
+# pay_ems_processed <- 
+#   pay_ems %>%
+#   select(calculations) %>% 
+#   as.matrix() %>% 
+#   as_tibble() %>% 
+#   select(calculations.net_changes.1) %>% 
+#   mutate(year = pay_ems$y,
+#          period = pay_ems$periodName,
+#          date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+#          BLS_estimate = as.numeric(calculations.net_changes.1) * 1000) %>% 
+#   select(date, BLS_estimate)
+
+
+
+
+```
+
+
+### Connect to the mysql database and update with the latest jobs data reported by BLS. 
+
+```{r} 
+library(config)
+library(dbplyr)
+library(DBI)
+
+dw <- config::get("mssql")
+
+con <- DBI::dbConnect(odbc::odbc(),
+                      Driver = dw$Driver,
+                      Server = dw$Server,
+                      #Host = dw$Host,
+                      UID    = dw$UID,
+                      PWD    = dw$PWD,
+                      Port   = dw$Port,
+                      Database = dw$Database
+                      #Schema = dw$Schema
+                      )
+
+
+DBI::dbRemoveTable(con, "fred_empl_data")
+DBI::dbRemoveTable(con, "bls_labor_for_data")
+DBI::dbRemoveTable(con, "pay_ems_raw")
+
+DBI::dbWriteTable(con, "pay_ems_raw", pay_ems_raw)
+DBI::dbWriteTable(con, "fred_empl_data", fred_empl_data)
+DBI::dbWriteTable(con, "bls_labor_for_data", bls_labor_for_data)
+```
+
+### Test the database update
+
+```{r}
+bls_labor_for_data <-
+  tbl(con, "bls_labor_for_data") %>% 
+  collect() %>% 
+  mutate(date = ymd(date),
+         value = as.numeric(value))
+
+fred_empl_data <-
+  tbl(con, "fred_empl_data") %>% 
+  collect()
+
+pay_ems_raw <- 
+  tbl(con, "pay_ems_raw") %>% 
+  collect()
+```
+
+### Test visualizations
+
+```{r}
+recessions_tribble <- tribble(
+  ~Peak, ~Trough,
+  "1948-11-01", "1949-10-01",
+  "1953-07-01", "1954-05-01",
+  "1957-08-01", "1958-04-01",
+  "1960-04-01", "1961-02-01",
+  "1969-12-01", "1970-11-01",
+  "1973-11-01", "1975-03-01",
+  "1980-01-01", "1980-07-01",
+  "1981-07-01", "1982-11-01",
+  "1990-07-01", "1991-03-01",
+  "2001-03-01", "2001-11-01",
+  "2007-12-01", "2009-06-01") %>% 
+  mutate(Peak = ymd(Peak),
+         Trough = ymd(Trough))
+
+# can save ggplot variables
+# geom_rect creates that object
+recession_shade <- 
+  geom_rect(data = recessions_tribble, 
+            inherit.aes = F, 
+            aes(xmin = Peak, 
+                xmax = Trough, 
+                ymin = -Inf, 
+                ymax = +Inf), 
+            fill = 'darkgray', 
+            alpha = 0.4)
+
+bls_labor_for_data %>% 
+  group_by(dem) %>%
+  filter(date >= "1980-01-01") %>% 
+  ggplot(aes(x = date, 
+             y = value, 
+             color = dem, 
+             label = dem)) +
+  recession_shade +
+  geom_line()  +
+  theme_minimal() +
+  scale_x_date(date_breaks = "2 years", 
+               date_labels = "%Y") +
+  xlim(ymd("1980-01-01"), Sys.Date()) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10), 
+                     labels = function(x) paste0(x, "%"), 
+                     sec.axis = dup_axis()) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption=element_text(hjust=0)) +
+  ylab("") +
+  xlab("") +
+  ggtitle("Labor Force Participation Rate: Prime Working Age (25-54)", 
+          subtitle = "seasonally adjusted") +
+  labs(caption = "based on work by the inestimable @lenkiefer") 
+```
+
+
+
+```{r}
+  fred_empl_data  %>%
+  select(date, ADP = `ADP Estimate`, BLS = `Nonfarm Employment`)  %>% 
+    gather(report, month, -date) %>% 
+    group_by(report) %>% 
+    mutate(monthly_change = month - lag(month, 1)) %>% 
+  na.omit() %>% 
+  filter(date >= "2018-01-01") %>%
+  ggplot(aes(x = date, y = monthly_change, fill = report)) + 
+  geom_col(position = "dodge") + 
+  scale_fill_manual(values = c("pink","cornflowerblue")) +
+  labs(title = "ADP Estimate v. BLS Report",
+       caption = "data source: fred",
+       y = "monthly change (thousands)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        plot.title = element_text(hjust = 0.5),
+        plot.caption  = element_text(hjust = 0)) +
+  scale_x_date(breaks = scales::pretty_breaks(n = 10))
+```
+
+```{r}
+pay_ems_raw %>% 
+  ggplot(aes(x = date, y = jobs)) +
+  geom_line()
+```
+

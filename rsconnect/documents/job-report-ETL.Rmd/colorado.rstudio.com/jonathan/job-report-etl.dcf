@@ -1,0 +1,12 @@
+name: job-report-etl
+title: job-report-ETL
+username: jonathan
+account: jonathan
+server: colorado.rstudio.com
+hostUrl: https://colorado.rstudio.com/rsc/__api__
+appId: 1021
+bundleId: 24936
+url: https://colorado.rstudio.com/rsc/content/1021/
+when: 1549040269.11243
+asMultiple: FALSE
+asStatic: FALSE

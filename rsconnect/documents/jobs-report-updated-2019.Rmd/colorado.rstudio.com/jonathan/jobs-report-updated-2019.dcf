@@ -1,0 +1,12 @@
+name: jobs-report-updated-2019
+title: jobs-report-updated-2019
+username: jonathan
+account: jonathan
+server: colorado.rstudio.com
+hostUrl: https://colorado.rstudio.com/rsc/__api__
+appId: 2217
+bundleId: 25269
+url: https://colorado.rstudio.com:443/rsc/content/2217/
+when: 1552111838.99962
+asMultiple: FALSE
+asStatic: FALSE

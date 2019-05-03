@@ -1,0 +1,74 @@
+---
+title: "anime"
+resource_files: config.yml
+rmd_output_metadata:
+  rsc_email_suppress_scheduled: yes
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+
+
+```{r setup, include = FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, comment = NA)
+library(tidyverse)
+library(png)
+library(tidyquant)
+library(timetk)
+library(highcharter)
+library(blastula)
+library(formattable)
+library(openxlsx)
+library(config)
+library(dbplyr)
+library(DBI)
+library(odbc)
+library(htmltools)
+library(gganimate)
+
+dw <- config::get("mssql")
+
+con <- DBI::dbConnect(odbc::odbc(),
+                      Driver = dw$Driver,
+                      Server = dw$Server,
+                      #Host = dw$Host,
+                      UID    = dw$UID,
+                      PWD    = dw$PWD,
+                      Port   = dw$Port,
+                      Database = dw$Database
+                      #Schema = dw$Schema
+                      )
+
+```
+
+### Import data from sql
+
+```{r}
+bls_labor_for_data <-
+  tbl(con, "bls_labor_for_data") %>% 
+  collect() %>% 
+  mutate(date = ymd(date),
+         value = as.numeric(value))
+
+
+```
+
+
+### Wrangle the data
+
+
+```{r}
+anim_ggplot <- 
+  ggplot(bls_labor_for_data, aes(x = date, y = value, color = dem)) +
+  geom_line() +
+  labs(title = "Labor Force Participation over Time") +
+  transition_reveal(date) 
+
+
+
+anim_ggplot
+```
+
+
+

@@ -1,0 +1,12 @@
+name: jobs-report-vis-from-sql
+title: jobs-report-vis-from-sql
+username: jonathan
+account: jonathan
+server: colorado.rstudio.com
+hostUrl: https://colorado.rstudio.com/rsc/__api__
+appId: 1022
+bundleId: 3571
+url: https://colorado.rstudio.com/rsc/content/1022/
+when: 1522959466.46608
+asMultiple: FALSE
+asStatic: FALSE

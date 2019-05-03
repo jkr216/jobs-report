@@ -1,0 +1,12 @@
+name: jobs-report
+title: jobs-report
+username: jonathan
+account: jonathan
+server: colorado.rstudio.com
+hostUrl: https://colorado.rstudio.com/rsc/__api__
+appId: 1160
+bundleId: 8518
+url: https://colorado.rstudio.com/rsc/content/1160/
+when: 1527940341.65317
+asMultiple: FALSE
+asStatic: FALSE
