@@ -1,0 +1,479 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(plotly)
+library(riingo)
+library(roll)
+library(tidyquant)
+library(tidyverse)
+library(timetk)
+
+riingo_set_token("97d26898fe27141ef524c1fa3ab0d3f0c3c59b09")
+
+pins::board_register(board = "rsconnect", server = "https://colorado.rstudio.com/rsc", key = "fAEzqlEWVZM8GEQAkoQiKTOYgMXrAvZ2")
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+
+Imagine I have two assets, GOOG and JPY. I invest `$50` in each of them. That's a 50% allocation to each. At the end of the year, GOOG is up `$5` or 10% and JPM is 0. 
+Our portfolio is up `$5` or 5%. GOOG contributed 100% of that. We can say that the portfolio increased 5%, and that 100% of it was contributed by GOOG. That is, total portfolio gain was `$5` and `$5` came from GOOG. Or, amount invested in GOOG * percent GOOG increased / amount portfolio increased. For JPM, it's obviously 0%. 
+
+Now, what if one is positive and one is positive. GOOG is up `$10` or 20%, and JPM is up `$5` or 10%. Our porfolio is up `$5`, or 10%. We could say that GOOG contributed `$10`/`$15` = 66%  and JPM contriubted `$5`/`$15` = 33%. Again, we have amount invested in asset * percent asset increased / amount portfolio increased. 
+
+This gets challenging when the allocation to assets changes over time, and an asset might even be sold.
+
+The SP500 rebalances quarterly so let's look at an ETF that tracks the S&P. 
+
+What we would really need is the holdings history of the ETF or portfolio. With date in one column, 
+
+first, we need the performance of each asset while it was held in the portfolio or fund. then we need to know how much of the asset was owned during that time. Example: we own 100 shares of GOOG, we it increased from $1000 to 1050 dollars. We made 50 * 100 (shares) = 5000 dollars; if this is a portfolio of 100,000 dollars, we just had a 5% return and GOOG accounted for all of it. If we had another 1000 sitting under the mattress, our overall portfolio gained only 2.5% but GOOG still accounted for all of it. In both cases we would say that GOOG accounted for 100% of the gains. 
+
+Now, imagine we had put 10000 into GOOG and 100000 into UBER. And we made 5000 on GOOG but lost 4500 on UBER. We have a 0.5% gain in our portfolio. But we could still say that 100% of our gain was driven by GOOG and 100% of our loss was driven by UBER. So, what're doing here is taking the total number of dollars gained by the portfolio (or we could take the total positive gain, before even thinking about the negative) and using that as the denominator, with the dollars gain by each position as the numerator. We could also, we have a 50% allocation to GOOG, our portfolio increased by .5%. 
+
+```{r}
+ieme_holdings <- read_csv("https://www.ishares.com/us/products/292424/fund/1467271812596.ajax?fileType=csv&fileName=IEME_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "ieme", 
+         download_date = ymd(Sys.Date()))
+```
+
+We could do this the old fashioned way. We could multiply number of shares by price, get the value, sum that value and divide each asset's value by the total.
+
+```{r}
+
+ieme_holdings %>% 
+  filter(!is.na(Shares)) %>% 
+  mutate(dollars_invested = Price * Shares,
+         total_dollars = sum(dollars_invested),
+         calculated_weight = dollars_invested/total_dollars * 100) %>% 
+  select(Ticker, Name, `Asset Class`, calculated_weight, everything()) %>% 
+  summarise(total_theirs = sum(`Weight (%)`),
+            total_mine = sum(calculated_weight))
+```
+
+```{r}
+
+ieme_tickers <- 
+ieme_holdings %>% 
+  filter(!(Ticker %in% c("XTSLA","LGFB", "LGFA"))) %>%
+  filter(!is.na(Name)) %>% 
+  pull(Ticker)
+
+ieme_weights <- 
+ieme_holdings %>%
+  filter(!(Ticker %in% c("XTSLA","LGFB", "LGFA"))) %>%
+  filter(!is.na(Name)) %>% 
+  mutate(weights = `Weight (%)`/100) %>% 
+  pull(weights)
+
+(1 - sum(ieme_weights))/87
+
+ieme_weights_adjusted <- ieme_weights + ( (1 - sum(ieme_weights))/87)
+
+sum(ieme_weights_adjusted)
+
+ieme_prices <- 
+ieme_tickers %>% 
+  tq_get(get = "stock.prices", from = "2016-01-01")
+
+library(timetk)
+t <- 
+ieme_prices %>% 
+  select(symbol, date, close) %>% 
+  group_by(symbol) %>% 
+  mutate(daily_return = close/lag(close, 1) - 1) %>% 
+  na.omit() %>% 
+  select(date, symbol, daily_return) %>% 
+  pivot_wider(names_from = "symbol", values_from = "daily_return") %>% 
+  tk_xts(date_var = date)
+
+  tq_portfolio(assets_col  = symbol, 
+               returns_col = daily_return,
+               weights     = ieme_weights_adjusted,
+               col_rename  = "returns",
+               rebalance_on = "months")
+```
+
+# Import Fund holdings
+
+```{r}
+
+spy_holding_dec_2017 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20171229", 
+    skip = 10) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2013 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20130131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2013-01-31"),
+         Ticker = str_remove(Ticker, "\\*"))  %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2014 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20140131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2014-01-31"),
+         Ticker = str_remove(Ticker, "\\*")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2015 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20150130", 
+    skip = 10) %>% 
+  mutate(date = ymd("2015-01-30")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2016 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20160129", 
+    skip = 10) %>% 
+  mutate(date = ymd("2016-01-29")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2017 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20170131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2017-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_Jan_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2018-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2019 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20190131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2019-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_feb_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180228", 
+    skip = 10)
+
+spy_holding_mar_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180329", 
+    skip = 10)
+
+spy_holding_apr_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180430", 
+    skip = 10)
+
+spy_holding_may_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180531", 
+    skip = 10)
+
+spy_holding_jun_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180629", 
+    skip = 10)
+
+spy_holding_jul_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180731", 
+    skip = 10)
+
+spy_holding_aug_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180831", 
+    skip = 10)
+
+spy_holding_sep_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180928", 
+    skip = 10)
+
+spy_holding_oct_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20181031", 
+    skip = 10)
+
+spy_holding_nov_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20181130", 
+    skip = 10)
+
+spy_holding_dec_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20181231", 
+    skip = 10)
+
+
+spy_holding_july_2019 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20190731", 
+    skip = 10)
+
+
+```
+
+## Save fund holdings to list
+
+```{r}
+
+# spy_holdings_list <-
+#   list(spy_holding_jan_2013,
+#        spy_holding_jan_2014,
+#        spy_holding_jan_2015,
+#        spy_holding_jan_2016,
+#        spy_holding_jan_2017,
+#        spy_holding_Jan_2018,
+#        spy_holding_jan_2019)
+# library(pins)
+# 
+# pin(spy_holdings_list, description = "List of tibbles with holdings for sp500 2013 through 2019", board = "rsconnect")
+
+
+spy_holdings_list  <- pins::pin_get("jonathan/spy-holdings-list", board = "rsconnect")
+
+spy_holdings_list %>% 
+  .[[6]] %>% 
+  filter(ticker %in% c("AET", "MON"))
+```
+
+## Get constituent returns
+
+```{r}
+spy_holding_jan_2013 %>% 
+  slice(1:5) %>% 
+  pull(ticker) %>% 
+  tq_get(from = "2013-01-01", to = "2013-12-31") %>% 
+  select(ticker = symbol, date, adjusted) %>% 
+  group_by(ticker) %>% 
+  mutate(daily_return = adjusted/lag(adjusted, 1) - 1) %>% 
+  summarise(yearly_sd = sd(daily_return, na.rm = t),
+            yearly_return  = last(adjusted)/first(adjusted) -1) %>% 
+  left_join(spy_holding_jan_2013)
+
+get_yearly_returns_sd <- function(holdings_tibble, year = 2013, top_n_holdings = 10){
+  from_date = str_glue(year, "-01-01", sep = "")
+  to_date = str_glue(year, "-12-31", sep = "")
+  
+  holdings_tibble %>% 
+  slice(1:top_n_holdings) %>% 
+  pull(ticker) %>% 
+  tq_get(from = from_date, to = to_date) %>% 
+  select(ticker = symbol, date, adjusted) %>% 
+  group_by(ticker) %>% 
+  mutate(daily_return = adjusted/lag(adjusted, 1) - 1) %>% 
+  summarise(yearly_sd = sd(daily_return, na.rm = t),
+            yearly_return  = last(adjusted)/first(adjusted) -1) %>% 
+  left_join(holdings_tibble)
+}
+
+get_yearly_returns_sd(spy_holding_jan_2019 )
+
+years <- seq(2013, 2019, by = 1)
+
+fund_weights_returns <-
+map_dfr(data_list, get_yearly_returns_sd, 20) %>% 
+  group_by(date) %>% 
+  mutate(year = year(date),
+         weight = weight/100)
+
+get_yearly_returns_sd(spy_holding_jan_2019, top_n_holdings = 5, year = years[7])
+
+fund_weights_returns_top_10 <-
+map2_dfr(data_list, years, get_yearly_returns_sd, top_n_holdings = 10) %>% 
+  group_by(date) %>% 
+  mutate(year = year(date),
+         weight = weight/100)
+
+fund_weights_returns_top_40 <-
+map2_dfr(data_list, years, get_yearly_returns_sd, top_n_holdings = 40) %>% 
+  group_by(date) %>% 
+  mutate(year = year(date),
+         weight = weight/100)
+
+pin(fund_weights_returns_top_40, description = "top 40 holdings in sp500, 2013 through 2019, weights, yearly return and sd", board = "rsconnect")
+```
+
+
+```{r}
+january_holdings <-
+spy_holding_jan_2013 %>% 
+bind_rows(spy_holding_jan_2014) %>% 
+bind_rows(spy_holding_jan_2015) %>% 
+bind_rows(spy_holding_jan_2016) %>% 
+bind_rows(spy_holding_jan_2017) %>% 
+bind_rows(spy_holding_Jan_2018) %>% 
+bind_rows(spy_holding_jan_2019) %>% 
+  group_by(date) %>% 
+  mutate(year = year(date)) 
+```
+
+
+# Visualize annual risk and returns over time
+
+```{r}
+colors <- c('#4AC6B7', '#1972A4', '#965F8A', '#FF7070', '#C61951')
+
+ax <- list(
+  title = "",
+  zeroline = FALSE,
+  showline = FALSE,
+  showticklabels = FALSE,
+  showgrid = FALSE
+)
+
+
+fund_weights_returns_top_40 %>% 
+  plot_ly(x = ~yearly_sd, y = ~yearly_return, color = ~ticker, size = ~weight, frame = ~date,
+        type = 'scatter', 
+        mode = 'markers', 
+        sizes = c(5,50),
+        marker = list(symbol = 'circle', 
+                      sizemode = 'diameter',
+                      opacity = 0.5,
+                      line = list(width = 2, 
+                                  color = '#FFFFFF')),
+        text = ~paste('ticker:', ticker, '<br>sector:', sector, 
+                      '<br>weight:', scales::percent(weight), 
+                      '<br>return:', scales::percent(yearly_return),
+                      '<br>risk:', scales::percent(yearly_sd)),
+        hoverinfo = 'text') %>%
+ # add_markers(color = ~sector, size = ~weight)
+    layout(xaxis = list(tickformat = "%", title = "risk"),
+           yaxis = list(tickformat = "%", title = "return"),
+           plot_bgcolor = "#000000",
+         paper_bgcolor = "#000000",
+         font = list(color="#ffffff"),
+      showlegend = T) %>% 
+  animation_opts(1500) %>% 
+  animation_button(visible = F) %>% 
+  config(displayModeBar = F)
+```
+
+
+```{r}
+library(ggrepel)
+fund_weights_returns_top_40 %>% 
+  filter(year == 2015) %>% 
+  arrange(desc(weight)) %>% 
+  ggplot(aes(x = yearly_sd, y = yearly_return, color = sector)) + 
+  geom_point(
+    data = function(x) top_n(x, 10, wt = weight),
+    aes(size = weight), 
+    alpha = 1
+  ) +
+  geom_text_repel(
+    data = function(x) top_n(x, 10, wt = weight), #filter(x, row_number() <= 10L),
+    aes(label = ticker),
+    point.padding = .2,
+    box.padding = .3,
+    force = 1,
+    min.segment.length = 0
+  ) +
+  geom_point(
+    data = function(x) top_n(x, -30, wt = weight),
+    aes(size = weight), 
+    alpha = .4
+  ) +
+  theme_minimal(14) +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    x = "risk",
+    y = "return"
+  )
+```
+
+# Extract tickers and get prices
+
+```{r}
+spy_2018_holdings_prices <- 
+spy_holdings_list %>% 
+  .[[6]] %>% 
+  select(ticker) %>% 
+  distinct() %>% 
+  pull() %>% 
+  tq_get(get = "stock.prices", from = "2018-01-01", to = "2018-12-31") 
+```
+
+There seems to be some error in these tickers. 
+
+```{r}
+problem_tickers <- 
+spy_2018_holdings_prices %>% 
+  group_by(symbol) %>% 
+  slice(1:20) %>% 
+  filter(is.na(adjusted)) %>% 
+  distinct(symbol) %>% 
+  pull()
+```
+
+
+# Calc daily returns, spread wider, to xts
+
+```{r}
+
+spy_2018_component_returns <-
+spy_2018_holdings_prices %>% 
+  select(symbol, date, adjusted) %>% 
+  group_by(symbol) %>% 
+  mutate(daily_return = adjusted/lag(adjusted, 1) - 1) %>% 
+  select(date, symbol, daily_return) %>% 
+  filter(!(symbol %in% problem_tickers)) %>% 
+  pivot_wider(names_from = "symbol", values_from = "daily_return") %>% 
+  tk_xts(date_var = date)
+```
+
+# Extract weights
+
+```{r}
+
+problem_weights <- 
+spy_2018_holdings_prices %>% 
+  select(symbol) %>% 
+  distinct() %>% 
+  left_join(spy_holdings_list %>% .[[6]] %>% select(ticker, weight), by = c("symbol" =  "ticker")) %>% 
+  mutate(weight = weight/100) %>% 
+  filter(symbol %in% problem_tickers) %>% 
+  pull(weight)
+
+sum(problem_weights)
+  
+spy_2018_weights <- 
+  spy_2018_holdings_prices %>% 
+  select(symbol) %>% 
+  distinct() %>% 
+  left_join(spy_holdings_list %>% .[[6]] %>% select(ticker, weight), by = c("symbol" =  "ticker")) %>% 
+  mutate(weight = weight/100) %>% 
+  filter(!(symbol %in% problem_tickers)) %>% 
+  pull(weight)
+
+# check what they sum to
+sum(spy_2018_weights)
+```
+
+We are off by 1 - .9477
+
+```{r}
+# here's how much we'll add to each position
+(1 - sum(spy_2018_weights))/476
+
+spy_2018_weights_adjusted <- spy_2018_weights + ( (1 - sum(spy_2018_weights))/476)
+
+sum(spy_2018_weights_adjusted)
+```
+
+
+```{r}
+spy_contribution_obj <- 
+ Return.portfolio(spy_2018_component_returns, weights = spy_2018_weights_adjusted, verbose = TRUE)
+
+spy_contribution_obj$contribution
+```
+
+```{r}
+#Rebalance quarterly; provide full calculations
+result.quarters = Return.portfolio(spy_2018_component_returns, weights=spy_2018_weights_adjusted, 
+rebalance_on = "quarters", verbose=TRUE)  
+table.AnnualizedReturns(result.quarters$returns)
+
+t <- result.quarters$contribution["2018"]
+
+to.period.contributions(result.quarters$contribution, period = "years") 
+```
+
+
+
+```{r}
+spy_contribution_2018 <-                               
+to.period.contributions(spy_contribution_obj$contribution, period = "years") %>% 
+  tk_tbl(preserve_index = T, rename_index = "date") %>% 
+  pivot_longer(-date, names_to = "ticker", values_to = "contribution") %>% 
+  left_join(spy_holdings_list %>% .[[6]] %>% select(ticker, sector), by = c("ticker" =  "ticker")) %>% 
+  arrange(desc(contribution))
+
+spy_contribution_2018 %>% 
+  # top_n(-10, contribution) %>% 
+  group_by(sector) %>% 
+  summarise(total_contr = sum(contribution))
+```
+
+```{r}
+"IVV" %>% 
+tq_get(get = "stock.prices", from = "2018-01-01", to = "2018-12-31") %>% 
+  summarise(return = last(adjusted)/first(adjusted) -1)
+```
+

@@ -1,0 +1,458 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+ 
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+
+library(reticulate)
+library(tidyverse)
+library(tidyquant)
+library(janitor)
+library(collapsibleTree)
+library(formattable)
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+```{r}
+
+iefn_holdings <- read_csv("https://www.ishares.com/us/products/292421/fund/1467271812596.ajax?fileType=csv&fileName=IEFN_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "iefn", 
+         download_date = ymd(Sys.Date())) 
+
+iehs_holdings <- read_csv("https://www.ishares.com/us/products/292422/fund/1467271812596.ajax?fileType=csv&fileName=IEHS_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "iehs", 
+         download_date = ymd(Sys.Date()))
+
+ieih_holdings <- read_csv("https://www.ishares.com/us/products/292423/fund/1467271812596.ajax?fileType=csv&fileName=IEIH_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "ieih", 
+         download_date = ymd(Sys.Date()))
+
+ieme_holdings <- read_csv("https://www.ishares.com/us/products/292424/fund/1467271812596.ajax?fileType=csv&fileName=IEME_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "ieme", 
+         download_date = ymd(Sys.Date()))
+
+ietc_holdings <- read_csv("https://www.ishares.com/us/products/292425/fund/1467271812596.ajax?fileType=csv&fileName=IETC_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "ietc", 
+         download_date = ymd(Sys.Date()))
+
+iecs_holdings <- read_csv("https://www.ishares.com/us/products/292414/fund/1467271812596.ajax?fileType=csv&fileName=IECS_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "iecs", 
+         download_date = ymd(Sys.Date()))
+
+
+iede_holdings <- read_csv("https://www.ishares.com/us/products/292415/fund/1467271812596.ajax?fileType=csv&fileName=IEDE_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "iede", 
+         download_date = ymd(Sys.Date()))
+
+msci_usa_holdings <- read_csv("https://www.ishares.com/us/products/239693/ishares-msci-usa-etf/1467271812596.ajax?fileType=csv&fileName=EUSA_holdings&dataType=fund", col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "msci_usa", 
+         download_date = ymd(Sys.Date()))
+
+msci_em_holdings <- read_csv("https://www.ishares.com/us/products/239637/ishares-msci-emerging-markets-etf/1467271812596.ajax?fileType=csv&fileName=EEM_holdings&dataType=fund", col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "msci_em", 
+         download_date = ymd(Sys.Date()))
+```
+
+Vanguard manual - VG makes it tough, have to go click the CSV then import. I'm working on a script for this.
+
+```{r}
+vti_total_mkt_holdings <- read_csv("Top_holdings_Total_Stock_Market_ETF.csv", 
+    col_types = cols(COUNTRY = col_skip(), 
+        `SECURITY DEPOSITORY RECEIPT TYPE` = col_skip(), 
+        SEDOL = col_skip(), X1 = col_skip()), 
+    skip = 7)
+```
+
+Clean up the column names and determine how many tickers we have
+
+```{r}
+vti_total_mkt_holdings %>% 
+  janitor::clean_names() %>% 
+  mutate(ticker = str_replace(ticker, "BRK.B", "BRK-B")) %>% 
+  distinct(ticker)
+```
+
+About 3,500 tickers. For today's purposes, let's take the top 1000 holdings. Even that will be a hefty data import but if you work in industry, this shouldn't be an issue for you as you probably have a feed. 
+
+```{r}
+library(readr)
+
+vgt_holdings <- read_csv("Top_holdings_Information_Technology_ETF.csv", 
+    col_types = cols(`SECURITY DEPOSITORY RECEIPT TYPE` = col_skip(), 
+        SEDOL = col_skip(), X1 = col_skip()), 
+    skip = 7) %>% 
+  mutate(fund = "vgt",
+         download_date = ymd(Sys.Date())) %>% 
+  rename(Name = HOLDINGS)
+
+
+```
+
+
+```{r}
+vgk_holdings <- 
+  read_csv("Top_holdings_FTSE_Europe_ETF.csv", 
+           col_types = cols(`SECURITY DEPOSITORY RECEIPT TYPE` = col_skip(), SEDOL = col_skip(), X1 = col_skip()), 
+           skip = 6)%>% 
+  mutate(fund = "vgk",
+         download_date = ymd(Sys.Date())) %>% 
+  rename(Name = HOLDINGS)
+```
+
+
+```{r}
+ieme_tickers <- 
+ieme_holdings %>% 
+  pull(Ticker)
+
+ieme_prices <- 
+ieme_tickers %>% 
+  tq_get(get = "stock.prices",
+         from = "2010-01-01")
+
+colors <- c('#4AC6B7', '#1972A4', '#965F8A', '#FF7070', '#C61951')
+
+ax <- list(
+  title = "",
+  zeroline = FALSE,
+  showline = FALSE,
+  showticklabels = FALSE,
+  showgrid = FALSE
+)
+library(plotly)
+ieme_prices %>% 
+  group_by(symbol) %>% 
+  mutate(year = year(date),
+         daily_return = close/lag(close) -1) %>% 
+  group_by(symbol, year) %>% 
+         summarise(yearly_sd = sd(daily_return, na.rm = T), 
+                   yearly_mean = mean(daily_return, na.rm = T)) %>% 
+  left_join(ieme_holdings %>% select(Ticker, Name), by = c("symbol" = "Ticker")) %>% 
+  plot_ly(x = ~yearly_sd, y = ~yearly_mean, color = ~Name, size = ~yearly_mean/yearly_sd, colors = colors, frame = ~year,
+        type = 'scatter', mode = 'markers', sizes = c(5,50),
+        marker = list(symbol = 'circle', sizemode = 'diameter',
+                      line = list(width = 2, color = '#FFFFFF')),
+        text = ~paste('ticker:', symbol, '<br>name:', Name, '<br>return:', scales::percent(yearly_mean),
+                      '<br>annualized sd:', scales::percent(yearly_sd))) %>% 
+    layout(xaxis = list(tickformat = "%", title = " sd"),
+           yaxis = list(tickformat = "%", title = " return"),
+           plot_bgcolor = "#000000",
+         paper_bgcolor = "#000000",
+         font = list(color="#ffffff"),
+      showlegend = F) %>% 
+  animation_opts(1000) %>% 
+  animation_button(visible = T) %>% 
+  config(displayModeBar = F)
+```
+
+```{r}
+library(plotly)
+holdings_visualizer_function <- function(fund_tibble){
+
+tickers <- 
+fund_tibble %>% 
+  pull(Ticker)
+
+prices <- 
+tickers %>% 
+  tq_get(get = "stock.prices",
+         from = "2010-01-01")
+
+colors <- c('#4AC6B7', '#1972A4', '#965F8A', '#FF7070', '#C61951')
+
+ax <- list(
+  title = "",
+  zeroline = FALSE,
+  showline = FALSE,
+  showticklabels = FALSE,
+  showgrid = FALSE
+)
+
+
+prices %>% 
+  group_by(symbol) %>% 
+  mutate(year = year(date),
+         daily_return = close/lag(close) -1) %>% 
+  group_by(symbol, year) %>% 
+         summarise(yearly_sd = sd(daily_return, na.rm = T), 
+                   yearly_mean = mean(daily_return, na.rm = T)) %>% 
+  left_join(fund_tibble %>% select(Ticker, Name), by = c("symbol" = "Ticker")) %>% 
+  plot_ly(x = ~yearly_sd, y = ~yearly_mean, color = ~Name, size = ~yearly_mean/yearly_sd, colors = colors, frame = ~year,
+        type = 'scatter', mode = 'markers', sizes = c(5,50),
+        marker = list(symbol = 'circle', sizemode = 'diameter',
+                      line = list(width = 2, color = '#FFFFFF')),
+        text = ~paste('ticker:', symbol, '<br>name:', Name, '<br>return:', scales::percent(yearly_mean),
+                      '<br>annualized sd:', scales::percent(yearly_sd))) %>% 
+    layout(xaxis = list(tickformat = "%", title = " sd"),
+           yaxis = list(tickformat = "%", title = " return"),
+           plot_bgcolor = "#000000",
+         paper_bgcolor = "#000000",
+         font = list(color="#ffffff"),
+      showlegend = F) %>% 
+  animation_opts(1000) %>% 
+  animation_button(visible = T) %>% 
+  config(displayModeBar = F)
+}
+
+
+holdings_visualizer_function(ieme_holdings)
+```
+
+
+```{r}
+p_dat <- 
+  stock_p %>% 
+  left_join(stock_index) %>% 
+  select(symbol,company,sector,date,weight,adjusted,ret,cumulative_ret) %>% 
+  mutate(year = year(date)) %>% 
+  group_by(symbol,sector,year) %>% 
+  mutate(cumulative_ret = with_order(date,cumprod,1+ret)-1, 
+         avg_sd = sd(ret,na.rm=T)*sqrt(252)) %>% 
+  filter(date == max(date,na.rm=T)) %>% 
+  ungroup()
+
+colors <- c('#4AC6B7', '#1972A4', '#965F8A', '#FF7070', '#C61951')
+
+ax <- list(
+  title = "",
+  zeroline = FALSE,
+  showline = FALSE,
+  showticklabels = FALSE,
+  showgrid = FALSE
+)
+
+
+p_dat %>% 
+  plot_ly(x = ~avg_sd, y = ~cumulative_ret, color = ~sector, size = ~cumulative_ret/avg_sd, colors = colors, frame = ~year,
+        type = 'scatter', mode = 'markers', sizes = c(5,50),
+        marker = list(symbol = 'circle', sizemode = 'diameter',
+                      line = list(width = 2, color = '#FFFFFF')),
+        text = ~paste('ticker:', symbol, '<br>sector:', sector, '<br>return:', scales::percent(cumulative_ret),
+                      '<br>annualized sd:', scales::percent(avg_sd))) %>% 
+    layout(xaxis = list(tickformat = "%", title = "annualized sd"),
+           yaxis = list(tickformat = "%", title = "cumulative return"),
+           plot_bgcolor = "#000000",
+         paper_bgcolor = "#000000",
+         font = list(color="#ffffff"),
+      showlegend = F) %>% 
+  animation_opts(1000) %>% 
+  animation_button(visible = F) %>% 
+  config(displayModeBar = F)
+```
+
+
+```{r}
+evolved_holdings <- 
+iecs_holdings %>% 
+  bind_rows(iede_holdings, iefn_holdings,iehs_holdings, ietc_holdings, ieih_holdings, ieme_holdings) %>% 
+  group_by(fund) %>% 
+  na.omit() %>% 
+  clean_names()
+```
+
+### Add sector and industry labels
+
+The evolved funds use NLP to classify tickers differently than the GICS standards but I'm curious how the GICS sectors and industries map back to the funds. I want to add the sector and industry labels to the the joined funds we imported above but first I need a data frame with the tickers, sectors and industries. The `tq_exchange()` function from `tidyquant` allows us to pull in tickers, sectors and industries by exchange.  
+
+```{r}
+
+nyse <- tq_exchange("NYSE")
+
+nyse_sectors <- 
+  nyse %>% 
+  select(ticker = symbol, sector, industry)
+
+nasdaq <- tq_exchange("NASDAQ")
+
+nasdaq_sectors <- 
+  nasdaq %>% 
+  select(ticker = symbol, sector, industry)
+
+amex <- tq_exchange("AMEX")
+
+amex_sectors <- 
+  amex %>% 
+  select(ticker = symbol, sector, industry)
+
+nyse_sectors <- read_rds("nyse_sectors.RDS")
+amex_sectors <- read_rds("amex_sectors.RDS")
+nasdaq_sectors <- read_rds("nasdaq_sectors.RDS")
+```
+
+Now we can use `left_join()` to add the sector/industry labels to the `evolved_holdings` object. We will join them by the common column called `Ticker`. 
+
+```{r}
+evolved_holdings %>%
+  left_join(nyse_sectors, by = "ticker") %>% 
+  left_join(nasdaq_sectors, by = "ticker") %>% 
+  #left_join(amex_sectors, by = "ticker") %>% 
+  select(contains("sector"), contains("industry"), ticker)
+```
+
+Note that a slight issue arose for us - we joined two sets of labels, that means we tried to add two columns called `sector` and two columns called `industry`. `left_join()` notices that and gives the columns unique names. But now we want to combine them to one column called `sector` and one called `industry`. We can use `case_when()` for this.
+
+```{r}
+evolved_holdings %>%
+  left_join(nyse_sectors, by = "ticker") %>% 
+  left_join(nasdaq_sectors, by = "ticker") %>% 
+  mutate(sector = case_when(!(is.na(sector.x)) ~ sector.x,
+                            !(is.na(sector.y)) ~ sector.y),
+         industry = case_when(!(is.na(industry.x)) ~ industry.x,
+                            !(is.na(industry.y)) ~ industry.y)) %>% 
+  select(-sector.x, -sector.y, -industry.x, -industry.y) %>% 
+  select(ticker, contains("sector"), contains("industry"))
+```
+
+Are we 100% sure all of our tickers received a label? Let's check.
+
+```{r}
+evolved_holdings %>%
+  left_join(nyse_sectors, by = "ticker") %>% 
+  left_join(nasdaq_sectors, by = "ticker") %>% 
+  mutate(sector = case_when(!(is.na(sector.x)) ~ sector.x,
+                            !(is.na(sector.y)) ~ sector.y),
+         industry = case_when(!(is.na(industry.x)) ~ industry.x,
+                            !(is.na(industry.y)) ~ industry.y)) %>% 
+  select(-sector.x, -sector.y, -industry.x, -industry.y) %>% 
+  select(ticker, contains("sector"), contains("industry")) %>% 
+  filter(is.na(sector)) %>% 
+  arrange(desc(ticker))
+```
+
+Looks like we missed 28 tickers. `XTSLA` is a Blackrock money market fund , `USD` is cash and those are 14 of the tickers we missed. Remember we have 7 funds so it seems that each fund holds some cash and some allocation a money market fund. I couldn't find a better way than to search for the rest of the tickers and manually enter their sectors and industries.
+
+
+```{r}
+evolved_holdings %>%
+  left_join(nyse_sectors, by = "ticker") %>% 
+  left_join(nasdaq_sectors, by = "ticker") %>% 
+  mutate(sector = case_when(!(is.na(sector.x)) ~ sector.x,
+                            !(is.na(sector.y)) ~ sector.y,
+                            ticker == "USD" ~ "cash",
+                            ticker == "XTSLA" ~ "cash",
+                            ticker == "CBOE" ~ "Finance",
+                            ticker == "IBKR" ~ "Finance",
+                            ticker == "NHC" ~ "Health Care",
+                            ticker == "SGYPQ" ~ "Health Care",
+                            ticker == "TMP" ~ "Finance",
+                            ticker == "PRK" ~ "Finance",
+                            ticker == "LGFA" ~ "Consumer Services",
+                            ticker == "LGFB" ~ "Consumer Services",
+                            ticker == "BFB" ~ "Consumer Staples",
+                            ticker == "BFA" ~ "Consumer Staples",
+                            ticker == "JWA" ~ "Communication Services",
+                            ticker == "BRKB" ~ "Financials"),
+         industry = case_when(!(is.na(industry.x)) ~ industry.x,
+                            !(is.na(industry.y)) ~ industry.y,
+                            ticker == "USD" ~ "cash",
+                            ticker == "XTSLA" ~ "cash",
+                            ticker == "CBOE" ~ "Capital Markets",
+                            ticker == "IBKR" ~ "Capital Markets",
+                            ticker == "NHC" ~ "Health Care Providers & Services",
+                            ticker == "SGYPQ" ~ "Pharmaceuticals, Biotech and Life Sciences",
+                            ticker == "TMP" ~ "Banks",
+                            ticker == "PRK" ~ "Banks",
+                            ticker == "LGFA" ~ "Entertainment",
+                            ticker == "LGFB" ~ "Entertainment",
+                            ticker == "BFB" ~ "Beverages",
+                            ticker == "BFA" ~ "Beverages",
+                            ticker == "JWA" ~ "Media",
+                            ticker == "BRKB" ~ "Diversified Financial Services")) %>% 
+  select(-sector.x, -sector.y, -industry.x, -industry.y) %>% 
+  filter(is.na(sector)) 
+```
+
+Looks good, let's save the labeled object as `evolved_labeled`.
+
+```{r}
+evolved_labeled <-
+evolved_holdings %>%
+  left_join(nyse_sectors, by = "ticker") %>% 
+  left_join(nasdaq_sectors, by = "ticker") %>% 
+  mutate(sector = case_when(!(is.na(sector.x)) ~ sector.x,
+                            !(is.na(sector.y)) ~ sector.y,
+                            ticker == "USD" ~ "cash",
+                            ticker == "XTSLA" ~ "cash",
+                            ticker == "CBOE" ~ "Finance",
+                            ticker == "IBKR" ~ "Finance",
+                            ticker == "NHC" ~ "Health Care",
+                            ticker == "SGYPQ" ~ "Health Care",
+                            ticker == "TMP" ~ "Finance",
+                            ticker == "PRK" ~ "Finance",
+                            ticker == "LGFA" ~ "Consumer Services",
+                            ticker == "LGFB" ~ "Consumer Services",
+                            ticker == "BFB" ~ "Consumer Staples",
+                            ticker == "BFA" ~ "Consumer Staples",
+                            ticker == "JWA" ~ "Communication Services",
+                            ticker == "BRKB" ~ "Financials"),
+         industry = case_when(!(is.na(industry.x)) ~ industry.x,
+                            !(is.na(industry.y)) ~ industry.y,
+                            ticker == "USD" ~ "cash",
+                            ticker == "XTSLA" ~ "cash",
+                            ticker == "CBOE" ~ "Capital Markets",
+                            ticker == "IBKR" ~ "Capital Markets",
+                            ticker == "NHC" ~ "Health Care Providers & Services",
+                            ticker == "SGYPQ" ~ "Pharmaceuticals, Biotech and Life Sciences",
+                            ticker == "TMP" ~ "Banks",
+                            ticker == "PRK" ~ "Banks",
+                            ticker == "LGFA" ~ "Entertainment",
+                            ticker == "LGFB" ~ "Entertainment",
+                            ticker == "BFB" ~ "Beverages",
+                            ticker == "BFA" ~ "Beverages",
+                            ticker == "JWA" ~ "Media",
+                            ticker == "BRKB" ~ "Diversified Financial Services")) %>% 
+  select(-sector.x, -sector.y, -industry.x, -industry.y) 
+```
+
+Almost ready to visualize these fund holdings. I have in mind to build a tree that proceeds from fund, to sector, to industry, to asset weights. There's a column for weights but it's a bit too fine grained, basically a continuous variable. Let's organize the fund holdings into buckets based on their weights using the `ntile()` function from `dplyr`. In this case, I want to create 5 buckets and that function will try to put the same number of assets into each bucket, based on their weights. Here's how that gets coded. I'll use `slice(1:5)` to show the top 5 holdings in bin 1 for each fund.
+
+```{r}
+evolved_labeled %>% 
+  mutate(buckets = ntile(desc(weight_percent), 5),
+         buckets_label = str_c("weights_bin_", buckets, sep = "")) %>% 
+  select(buckets, buckets_label, fund, everything()) %>% 
+  slice(1, 30, 50, n())
+
+evolved_labeled_bucketed <-
+evolved_labeled %>% 
+  mutate(buckets = ntile(desc(weight_percent), 5),
+         buckets = str_c("weights_bin_", buckets, sep = ""))
+
+write_rds(evolved_labeled_bucketed, file = "evolved_labeled_bucketed.RDS")
+```
+
+
+Now let's visualize these funds using the new [collapsibleTree](https://adeelk93.github.io/collapsibleTree/). We set the hierarchy of nodes with the `hierarchy` argument and identify what we wish to display when a user hovers with the `attribute` argument. 
+
+```{r, fig.width=5}
+evolved_labeled_bucketed %>% 
+    collapsibleTreeSummary(
+      root = "evolved",
+      hierarchy = c("fund","sector", "industry", "buckets", "ticker"),
+      attribute = "shares",
+      zoom = FALSE
+    )
+```
+
+
+
+
+e voila! 

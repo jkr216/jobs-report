@@ -1,0 +1,9 @@
+default:
+  mysql:
+      Driver: "mysql"
+      Server: "mysql.alphaarchitect.com"
+      Database: "portfolio_architect"
+      Host: "mysql.alphaarchitect.com"
+      UID: "jkregenstein"
+      PWD: "RaDNopEN3AQW"
+      Port: 3306

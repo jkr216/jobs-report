@@ -1,0 +1,336 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(plotly)
+library(riingo)
+library(roll)
+library(tidyquant)
+library(tidyverse)
+library(timetk)
+
+riingo_set_token("97d26898fe27141ef524c1fa3ab0d3f0c3c59b09")
+
+pins::board_register(board = "rsconnect", server = "https://colorado.rstudio.com/rsc", key = "fAEzqlEWVZM8GEQAkoQiKTOYgMXrAvZ2")
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+
+# January holdings 2013 - 2019
+
+```{r}
+
+ivv_holding_jan_2013 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20130131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2013-01-31"),
+         Ticker = str_remove(Ticker, "\\*"))  %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+ivv_holding_jan_2014 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20140131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2014-01-31"),
+         Ticker = str_remove(Ticker, "\\*")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+ivv_holding_jan_2015 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20150130", 
+    skip = 10) %>% 
+  mutate(date = ymd("2015-01-30")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+ivv_holding_jan_2016 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20160129", 
+    skip = 10) %>% 
+  mutate(date = ymd("2016-01-29")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+ivv_holding_jan_2017 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20170131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2017-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+ivv_holding_jan_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2018-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price)
+
+ivv_holding_jan_2019 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20190131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2019-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price)
+
+
+january_holdings <-
+ivv_holding_jan_2013 %>% 
+bind_rows(ivv_holding_jan_2014) %>% 
+bind_rows(ivv_holding_jan_2015) %>% 
+bind_rows(ivv_holding_jan_2016) %>% 
+bind_rows(ivv_holding_jan_2017) %>% 
+bind_rows(ivv_holding_Jan_2018) %>% 
+bind_rows(ivv_holding_jan_2019) %>% 
+  group_by(date) %>% 
+  mutate(year = year(date)) 
+
+```
+
+### Import prices
+
+First, let's get the tickers that were held as of January 2018.
+
+```{r}
+
+ivv_2018_tickers <- 
+ivv_holding_jan_2018 %>% 
+  select(ticker) %>% 
+  distinct() %>% 
+  pull()
+```
+
+We can pass them to `riingo_prices()` and set `resample_frequency = "monthly"` so that we are not importing too much data here.
+
+```{r}
+ivv_prices_tiingo <- 
+ivv_2018_tickers %>% 
+  riingo_prices(start_date = "2015-12-31", end_date = "2018-12-31", resample_frequency = "monthly")
+```
+
+Let's investigate how many tickers actually were found on tiingo - when passing more than 500 tickers, there's usually going to be a problem somewhere.
+
+```{r}
+ivv_tickers_that_worked <- 
+ivv_prices_tiingo %>% 
+  distinct(ticker) %>% 
+  pull()
+```
+
+We pulled in data for 502 tickers, but we passed 510, what were the problematic tickers.
+
+```{r}
+problem_tickers <- 
+setdiff(ivv_2018_tickers, ivv_tickers_that_worked)
+
+problem_tickers
+```
+
+Well, one of the problems was a blank cell, then a few tickers. Let's see how much weighting those problem tickers had.
+
+```{r}
+
+problem_weight <-
+ivv_holding_jan_2018 %>% 
+  filter(ticker %in% problem_tickers) %>% 
+  summarise(sum(weight, na.rm = T)/100) %>% 
+  pull()
+
+problem_weight
+```
+
+About .0061 spread amongst the 7 problem tickers. Not ideal but we can live with it for today.
+
+Now we can calculate the monthly returns for the 502 tickers that have price data. 
+
+After piping to `mutate()` to calculate returns, we will `pivot_wider()` to make this data wide, and then convert to an `xts` object using `tk_xts(date_var = date)`. That's because our workhorse function `Return.portfolio()` is from the `PerfomanceAnalytics` package and expects a wide, xts object. 
+
+```{r}
+
+ivv_2018_component_returns <-
+  ivv_prices_tiingo %>%
+  select(ticker, date, adjClose) %>%
+  group_by(ticker) %>%
+  mutate(monthly_return = adjClose / lag(adjClose, 1) - 1) %>%
+  select(date, ticker, monthly_return) %>%
+  pivot_wider(names_from = "ticker", values_from = "monthly_return") %>%
+  tk_xts(date_var = date)
+```
+
+We eventually want to calculate how our 502 holdings contributed to the return of this fund and that means we will need the weightings to each holding. This changes throughout the year, of course. First, let's just use the beginning of year weights.
+
+```{r}
+  
+ivv_january_weights <- 
+  ivv_holding_jan_2018 %>% 
+  filter(ticker %in% ivv_tickers_that_worked) %>%
+  mutate(weight = (weight/100)) %>% 
+  pull(weight)
+```
+
+Now we turn to the `Return.portfolio()` function. As the name implies, that function will calculate portfolio returns. We need to pass in an `xts` object of returns and a vector of weights. We can also set the `rebalance` argument to "quarters".
+
+```{r}
+Return.portfolio(ivv_2018_component_returns, weights = ivv_january_weights, rebalance_on = "quarters")
+```
+
+That returned monthly portfolio returns but it can do so much more! If we set the `verbose` argument to `TRUE`, the function returns tons of useful information. 
+
+
+```{r}
+ivv_contribution_obj <- 
+ Return.portfolio(ivv_2018_component_returns, weights = ivv_january_weights, rebalance_on = "quarters",  verbose = TRUE)
+
+ivv_contribution_obj %>% 
+  names()
+```
+
+
+We we can see that several of our tickers contribute zero in the beginning part of 2014. That's because they had not yet IPO'd at that time. Perhaps we're curious how a certain ticker's contribution had varied over time? Let's take `TWOU` which we access with `ipo_port_return_2014_contribution_obj$contribution$TWOU`. 
+
+```{r}
+library(highcharter)
+  highchart(type = "stock") %>%
+  hc_title(text = "Contribution over time") %>%
+  hc_add_series(ivv_contribution_obj$contribution$MSFT, name = "TSLA", color = "cornflowerblue")
+```
+
+Next we might want to know how each of our tickers contributed to portfolio return on year-by-year basis. Here is where we tip our cap to the package authors who have included a function called `to.period.contributions` where we can specify an argument `period = years` and pass in our object `ivv_contribution_obj$contribution`. That returns an `xts` object. We will convert back to a tibble with `tk_tbl`, make the result tidy with `pivot_longer()` and then wrangle to be a bit easier on the eyes.
+
+
+```{r}
+tidy_contributions <- 
+to.period.contributions(ivv_contribution_obj$contribution, period = "years") %>% 
+  tk_tbl(preserve_index = T, rename_index = "date") %>% 
+  pivot_longer(-date, names_to = "ticker", values_to = "contribution") %>% 
+  left_join(ivv_holding_jan_2018 %>% select(ticker, sector), by = c("ticker" =  "ticker")) %>% 
+  arrange(desc(contribution)) %>% 
+  mutate(sector = case_when(is.na(sector) ~ "Portfolio Return",
+                            TRUE ~ sector))
+
+tidy_contributions
+```
+
+
+Alright, we have contributions for 504 tickers. How can we visualize this? 
+
+```{r}
+(
+tidy_contributions %>% 
+  filter(!str_detect(sector, 'Cash|Portfolio')) %>% 
+  mutate(sector = str_wrap(sector, width = 10)) %>% 
+  ggplot(aes(x = sector, y = contribution, color = ticker, text = ticker)) + 
+  geom_point(show.legend = FALSE, alpha = .5) +
+  labs(x = "", y = "", title = "Contribution to Port Return by Sector") +
+  theme(axis.text.x = element_text(angle = 60, vjust = .77),
+        plot.title = element_text(hjust = .5)) 
+) %>% 
+  ggplotly(tooltip = "text")
+```
+
+That chart isn't bad. We can see, for example, that Financials had a few negative contributors like Wells Fargo but not many major positive contributors. Health care was the opposite with Pfizer and Merck major contributors. Check out Facebook and Microsfot in the Information Technology sectors. 
+
+
+```{r}
+tidy_contributions %>% 
+  group_by(sector) %>% 
+  summarise(total_contr = sum(contribution)) %>% 
+  arrange(total_contr)
+```
+
+To take a quick pause and review what we've done and what we've got now: 
+
+1. We started with the monthly returns of our tickers that IPO'd in 2014. 
+2. We converted those returns to a wide `xts` objects.
+3. We passed the `xts` object to `Return.portfolio(...., verbose = TRUE)`.
+4. That returned a list of 6 objects, one of which was called `contribution`. 
+5. We passed that `contribution` object to `to.period.contributions(..., period = "years")` and got the yearly contribution for each ticker. 
+6. We converted those yearly contributions to a tidy tibble. 
+
+# Wrap this to a function
+
+
+```{r}
+port_cont_function <- function(individual_returns_tibble, weights = NULL, year){
+
+  # Steps 1 and 2
+  individual_returns_xts <-
+    individual_returns_tibble %>%
+    select(ticker, date, monthly_returns, ipo.year) %>% 
+    filter(ipo.year == year) %>% 
+    select(-ipo.year) %>% 
+    pivot_wider(names_from = "ticker", values_from = "monthly_returns") %>% 
+    tk_xts(date_var = date)
+  # Steps 3 and 4
+  port_return_contribution_obj <- 
+    Return.portfolio(individual_returns_xts, weights = weights, verbose = TRUE)
+  
+  # Steps 5 and 6
+  port_return_contribution <-                               
+    to.period.contributions(port_return_contribution_obj$contribution, period = "years") %>% 
+    tk_tbl(preserve_index = T, rename_index = "date") %>% 
+    pivot_longer(-date, names_to = "ticker", values_to = "contribution") %>% 
+    arrange(date, contribution)
+
+}
+
+t <- port_cont_function(ipo_riingo_prices_returns_pins, year = 2014)
+```
+
+
+From here we can experiment with `ggplot`, `plotly` and `gganimate` to explore different ways of presenting this data. 
+
+Let's start with `ggplot` and plot just the contributions during the year 2015. 
+
+```{r}
+(
+  tidy_contributions %>% 
+    group_by(sector) %>% 
+    filter(!str_detect(sector, 'Cash')) %>%
+  summarise(total_contr = sum(contribution)) %>% 
+  arrange(total_contr) %>% 
+    mutate(sector = str_wrap(sector, width = 10)) %>% 
+    ggplot(aes(x = reorder(sector, total_contr), y = total_contr, fill = sector, text = paste("sector: ", sector, "<br> contribution: ", round(total_contr, 4) * 100, "%" , sep = ""))) + 
+    geom_col(width = .5) +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1),
+          plot.title = element_text(hjust = .5)) +
+    labs(x = "", y = "", title = "Contributions to SP500 by sector, 2018") +
+    scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10))
+) %>% 
+  ggplotly(tooltip = "text")
+```
+
+
+
+```{r}
+(
+ipo_port_return_2014_contribution %>% 
+  #filter(date == "2015-12-31") %>% 
+  mutate(year = year(date)) %>% 
+  ggplot(aes(x = reorder(ticker, contribution), y = contribution, fill = ticker, text = paste("ticker: ", ticker, "<br> contribution: ", round(contribution, 4) * 100, "%" , sep = ""))) + 
+    geom_col() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    labs(x = "") +
+    scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+  facet_wrap(~year) 
+) %>% 
+  ggplotly(tooltip = "text")
+```
+
+
+```{r}
+library(gganimate)
+library(gifski)
+library(png)
+tidy_contributions %>% 
+  filter(ticker != "Portfolio Return") %>% 
+  mutate(year = year(date)) %>%
+  ggplot(aes(x = ticker, y = contribution, fill = ticker, text = paste("ticker: ", ticker, "<br> contribution: ", round(contribution, 4) * 100, "%" , sep = ""))) + 
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  geom_label(data = . %>% group_by(year) %>% filter(contribution == max(contribution) | contribution == min(contribution)), aes(label = ticker), show.legend = F) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+  transition_states(year) +
+  labs(title = 'Contributions by Ticker for {closest_state}', x = "") +
+  ease_aes('linear')  +
+  enter_fade()+
+  exit_fade()
+```
+
+
+That's all for today's addendum. 
+
+If you like this sort of code through check out my book, [Reproducible Finance with R](https://www.amazon.com/Reproducible-Finance-Portfolio-Analysis-Chapman/dp/1138484032).
+
+Not specific to finance but I've been using tons of code learned at [Business Science University course](https://university.business-science.io/p/ds4b-101-r-business-analysis-r). 
+
+I'm also going to be posting weekly code snippets on [linkedin](https://www.linkedin.com/in/jkregenstein/), connect with me there if you're keen for some R finance stuff.
+
+Thanks for reading and see you next time!

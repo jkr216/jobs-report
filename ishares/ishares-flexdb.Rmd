@@ -1,0 +1,35 @@
+---
+title: "ishares evolved overview"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    theme: bootstrap
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+# https://beta.rstudioconnect.com/content/4574/
+library(flexdashboard)
+library(tidyverse)
+library(collapsibleTree)
+library(formattable)
+```
+
+```{r, include = FALSE}
+load("evolved_labeled_bucketed.RData")
+```
+
+### evolved tree
+
+```{r}
+  evolved_labeled_bucketed %>% 
+    collapsibleTreeSummary(
+      root = "evolved",
+      hierarchy = c("fund","sector", "industry", "buckets", "ticker"),
+      attribute = "shares",
+      zoom = FALSE
+    )
+
+```
+

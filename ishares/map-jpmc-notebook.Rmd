@@ -1,0 +1,207 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+The ultimate goal is to break down different funds by the average fundamentals inside the holdings of those funds. 
+
+Fund breakdown as a theme that will emerge as 
+
+```{r setup}
+
+library(reticulate)
+library(tidyverse)
+library(tidyquant)
+library(janitor)
+library(collapsibleTree)
+library(formattable)
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+
+```{r}
+msci_usa_holdings <- read_csv("https://www.ishares.com/us/products/239693/ishares-msci-usa-etf/1467271812596.ajax?fileType=csv&fileName=EUSA_holdings&dataType=fund", 
+    skip = 10)
+```
+
+
+```{r}
+msci_em_holdings <- read_csv("https://www.ishares.com/us/products/239637/ishares-msci-emerging-markets-etf/1467271812596.ajax?fileType=csv&fileName=EEM_holdings&dataType=fund", 
+    skip = 10) 
+country_weights <- 
+msci_em_holdings %>% 
+  clean_names() %>%
+  mutate(location = replace(location, location == "Russian Federation", "Russia"), 
+         location = replace(location, location == "Korea (South)", "Korea"),
+         location = replace(location, location == "KO", "Korea"),
+         location = replace(location, location == "Czech Republic", "Czech Rep.")#,
+         # location = case_when(grepl("Cash", sector) ~ "Cash",
+         #                      TRUE ~ location)
+         ) %>% 
+
+  # filter(grepl("Cash", sector))
+  filter(!is.na(location) & location != "-" & location != "European Union") %>% 
+  group_by(location) %>% 
+  #nest(-location) %>% 
+  summarise(country_weights = sum(weight_percent)) %>% 
+  arrange(desc(country_weights)) %>% 
+  rename(name = location)
+
+```
+
+```{r}
+msci_em_holdings %>% 
+  clean_names() %>%
+  mutate(location = replace(location, location == "Russian Federation", "Russia"), 
+         location = replace(location, location == "Korea (South)", "Korea"),
+         location = replace(location, location == "KO", "Korea"),
+         location = replace(location, location == "Czech Republic", "Czech Rep.")#,
+         # location = case_when(grepl("Cash", sector) ~ "Cash",
+         #                      TRUE ~ location)
+         ) %>% 
+
+  # filter(grepl("Cash", sector))
+  filter(!is.na(location) & location != "-" & location != "European Union") %>% 
+  group_by(location) 
+```
+
+
+```{r}
+tq_get("AAPL", get = "key.ratios")
+library(Quandl)
+Quandl.api_key("d9EidiiDWoFESfdk5nPy")
+Quandl.datatable('SHARADAR/SF1', ticker='IBM')
+Quandl.datatable('SHARADAR/DAILY', ticker='AAPL')
+```
+
+# Now let's build a map of the earth
+
+```{r}
+library(rnaturalearth)
+world <- ne_countries(type = "countries", returnclass = 'sf')
+
+# For the sake of brevity, let's look at just the first 6 countries
+world %>% slice(1:6)
+
+#If you want to peek at the longitude and latitude, use world$geometry
+```
+
+
+
+```{r}
+library(leaflet)
+
+# Create a palette with different shades of blue for different
+# GDP estimates.
+
+gdpPal <- colorQuantile("Blues", world$gdp_md_est, n = 20)
+```
+
+
+```{r}
+# Make a popup object.
+# Notice we're referencing the column names with the '$', same as we would with a non-spatial dataframe.
+economyPopup <- paste0("<strong>Country: </strong>", 
+                world$name, 
+                "<br><strong>Market Stage: </strong>", 
+                 world$economy)
+```
+
+
+
+```{r}
+# Build our leaflet map object.
+
+leaf_world_economy <- leaflet(world) %>%
+  addProviderTiles("CartoDB.Positron") %>% 
+  setView(lng =  20, lat =  15, zoom = 2) %>%
+      addPolygons(stroke = FALSE, smoothFactor = 0.2, fillOpacity = .7, color =
+      ~gdpPal(gdp_md_est), layerId = ~name, popup = economyPopup)
+
+# Display that object below.
+
+leaf_world_economy
+```
+
+
+```{r}
+# Once we run this line of code, our ticker symbols and ytd numbers will be added
+# to the simple features dataframe.
+
+library(sf)
+library(leaflet)
+library(rgdal)
+
+world_etf <- 
+  merge(world, country_weights, by = "name", all.x = TRUE)
+
+world_etf %>% colnames()
+  select(name, country_weights) %>% 
+  #filter(grepl("Russia", name)) %>%
+  filter(!is.na(country_weights))
+  head()
+
+  world %>% 
+    filter(grepl("Taiwan", name)) %>% 
+    select(name)
+
+  
+```
+
+```{r}
+# Create a popup that displays the year-to-date performance.
+
+ytdPopup <- paste0("<strong>Country: </strong>", 
+                world_etf$name,
+                "<br><strong> Year-to-date: </strong>", 
+                world_etf$gdp_md_est, "%")
+```
+
+
+```{r}
+weight_pal <- colorQuantile("RdYlGn", world_etf$country_weights, n = 20)
+```
+
+```{r}
+leaf_world_etf <- leaflet(world_etf) %>%
+  addProviderTiles("CartoDB.Positron") %>% 
+  setView(lng =  20, lat =  15, zoom = 2) %>%
+      addPolygons(stroke = FALSE, smoothFactor = 0.2, fillOpacity = .7,
+                  
+      # The next line of code is really important for creating the map we want to use later.       
+      
+      color = ~weight_pal(country_weights), layerId = ~name, popup = ytdPopup)
+
+leaf_world_etf
+```
+
+```{r}
+
+jpmc_data_address <- 
+"https://institute.jpmorganchase.com/content/dam/jpmc/static_sites/institute/data/lcc_fulldata.zip"
+
+temp <- tempfile()
+
+download.file(
+  # location of file to be downloaded
+  jpmc_data_address,
+  # where we want R to store that file
+  temp,
+  mode = "wb", 
+  quiet = TRUE)
+
+# Look at your files and notice the csv will appear there. We just grabbed it from the internet.
+files <- 
+  unzip(temp, list = TRUE)
+
+csv_file <- 
+  files$Name
+
+jpmc_local_data <- 
+  read_csv(unz(temp, csv_file))
+  
+jpmc_local_data  %>% 
+glimpse()
+```
+

@@ -1,0 +1,85 @@
+---
+title: "Sector Breadth"
+runtime: shiny
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    source_code: embed
+---
+
+
+```{r setup, message = FALSE}
+library(tidyverse)
+library(plotly)
+library(tidyquant)
+library(timetk)
+library(ggtext)
+
+vti_sma50_sma200 <- 
+  read_rds("vti_sma50_sma200.RDS") 
+# 
+date_choices <- 
+  read_rds("date_choices.RDS")
+
+sma50_sma200_fun <- function(price_tibble, as_of_date){
+date_filter <- as_of_date
+(
+price_tibble%>% 
+    mutate(date = ymd(date)) %>% 
+    filter(date == date_filter) %>% 
+  ggplot(aes(x = sector, y = percent, fill = trend, text = str_glue("{sector}: {percent_label}"))) + 
+  geom_col(width = .3, position = position_dodge(width = .5), show.legend = F) +
+  scale_y_continuous(labels = scales::percent_format(), 
+                     breaks = scales::pretty_breaks(n = 10)) +
+    labs(x = "", 
+         y = "", 
+         title = "Percent SMA 50 <span style='color:darkgreen'>above</span> or <span style='color:darkred'>below</span> SMA 200 \n <span style='font-size:10pt'> as of 2019-12-19</span> " ) +
+  scale_fill_manual(values = c( "darkgreen", "darkred")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        plot.title = element_markdown(hjust = .5),
+        plot.subtitle = element_text(hjust = .5)) 
+  ) %>% 
+  ggplotly(tooltip = "text")
+}
+
+```
+
+Sidebar {.sidebar}
+=====================================
+  
+```{r}
+
+# selectInput(inputId = "chosen_fund", "Choose Fund", choices = c("VTI", "IVV"))
+
+
+selectInput(inputId = "as_of_date", "As of date", choices = date_choices)
+
+# sliderInput("as_of_date",
+#             "Dates:",
+#             min = as.Date(date_choices[1]),
+#             max = as.Date(tail(date_choices, n =1)),
+#             value = as.Date(date_choices[1]),
+#             step = 1,
+#             timeFormat = "%Y-%m-%d",
+#             animate = TRUE)
+
+```
+
+Breadth
+=====================================  
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Sector Breadth
+
+```{r}
+renderPlotly({
+  date_for_fun <-  input$as_of_date
+  
+  sma50_sma200_fun(price_tibble = vti_sma50_sma200, as_of_date = date_for_fun)
+})
+
+
+```

@@ -1,0 +1,418 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(plotly)
+library(riingo)
+library(roll)
+library(tidyquant)
+library(tidyverse)
+library(timetk)
+
+riingo_set_token("97d26898fe27141ef524c1fa3ab0d3f0c3c59b09")
+
+pins::board_register(board = "rsconnect", server = "https://colorado.rstudio.com/rsc", key = "fAEzqlEWVZM8GEQAkoQiKTOYgMXrAvZ2")
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+
+# January holdings 2013 - 2019
+
+```{r}
+
+spy_holding_jan_2013 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20130131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2013-01-31"),
+         Ticker = str_remove(Ticker, "\\*"))  %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2014 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20140131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2014-01-31"),
+         Ticker = str_remove(Ticker, "\\*")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2015 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20150130", 
+    skip = 10) %>% 
+  mutate(date = ymd("2015-01-30")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2016 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20160129", 
+    skip = 10) %>% 
+  mutate(date = ymd("2016-01-29")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_jan_2017 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20170131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2017-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_Jan_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2018-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price)
+
+spy_holding_jan_2019 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20190131", 
+    skip = 10) %>% 
+  mutate(date = ymd("2019-01-31")) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price)
+
+
+january_holdings <-
+spy_holding_jan_2013 %>% 
+bind_rows(spy_holding_jan_2014) %>% 
+bind_rows(spy_holding_jan_2015) %>% 
+bind_rows(spy_holding_jan_2016) %>% 
+bind_rows(spy_holding_jan_2017) %>% 
+bind_rows(spy_holding_Jan_2018) %>% 
+bind_rows(spy_holding_jan_2019) %>% 
+  group_by(date) %>% 
+  mutate(year = year(date)) 
+
+```
+
+# Monthly 2018 holdings and weights
+
+```{r}
+# spy_holding_Jan_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180131", 
+#     skip = 10) %>% 
+#   mutate(date = ymd("2018-01-31")) %>% 
+#   select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+spy_holding_feb_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180228", 
+    skip = 10)
+
+spy_holding_mar_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180329", 
+    skip = 10)
+
+spy_holding_apr_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180430", 
+    skip = 10)
+
+spy_holding_may_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180531", 
+    skip = 10)
+
+spy_holding_jun_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180629", 
+    skip = 10)
+
+spy_holding_jul_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180731", 
+    skip = 10)
+
+spy_holding_aug_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180831", 
+    skip = 10)
+
+spy_holding_sep_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20180928", 
+    skip = 10)
+
+spy_holding_oct_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20181031", 
+    skip = 10)
+
+spy_holding_nov_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20181130", 
+    skip = 10)
+
+spy_holding_dec_2018 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20181231", 
+    skip = 10)
+```
+
+# Some random dates
+
+```{r}
+spy_holding_dec_2017 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20171229", 
+    skip = 10) %>% 
+  select(date, ticker = Ticker, weight = `Weight (%)`, sector = Sector, price = Price) 
+
+
+spy_holding_july_2019 <- read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund&asOfDate=20190731", 
+    skip = 10)
+
+
+```
+
+## Save fund holdings to list
+
+```{r}
+
+# spy_holdings_list <-
+#   list(spy_holding_jan_2013,
+#        spy_holding_jan_2014,
+#        spy_holding_jan_2015,
+#        spy_holding_jan_2016,
+#        spy_holding_jan_2017,
+#        spy_holding_Jan_2018,
+#        spy_holding_jan_2019)
+
+
+library(pins)
+# 
+pin(ivv_holdings_list, description = "List of tibbles with holdings for sp500 2013 through 2019", board = "rsconnect")
+
+
+ivv_holdings_list  <- pins::pin_get("jonathan/ivv-holdings-list", board = "rsconnect")
+
+years <- seq(2013, 2019, by = 1)
+
+names(ivv_holdings_list) <- years
+
+ivv_holdings_list <- 
+ spy_holdings_list %>% 
+  map(~mutate(.x, ticker = str_replace(ticker, "BRKB", "BRK-B")))
+
+ivv_holding_jan_2018 <- 
+  ivv_holdings_list %>% 
+  .[['2018']]  #%>%
+  # mutate(ticker = str_replace(ticker, "BRKB", "BRK-B")) %>%
+  # filter(ticker %in% c("AET", "MON"))
+```
+
+## Get constituent returns for one year
+
+First, we import the daily prices for each constituent for 2018 and then use `mutate()` to calculate daily returns. 
+
+```{r}
+ivv_prices_tiingo <- 
+ivv_2018_tickers %>% 
+  riingo_prices(start_date = "2018-01-01", end_date = "2018-12-31", resample_frequency = "monthly")
+  select(ticker = symbol, date, adjusted) %>% 
+  group_by(ticker) %>% 
+  mutate(daily_return = adjusted/lag(adjusted, 1) - 1) %>% 
+  summarise(dailyly_sd = sd(daily_return, na.rm = T),
+            yearly_return  = last(adjusted)/first(adjusted) -1) %>% 
+  left_join(ivv_holding_jan_2018)
+```
+
+We can create a function that takes as an input the year, the number of holdings a tibble of holdings and weights. The function then imports prices for that year and calculates daily returns. Then it calculates standard deviation of returns for each ticker and the yearly return for each ticker. This allows us to visualize on a year by year basis, the sd and return for the top N holdings in the fund or portfolio.
+
+
+Create the function:
+
+```{r}
+
+get_yearly_returns_sd <- function(holdings_tibble, year = 2013, top_n_holdings = 10){
+  from_date = str_glue(year, "-01-01", sep = "")
+  to_date = str_glue(year, "-12-31", sep = "")
+  
+  holdings_tibble %>% 
+  slice(1:top_n_holdings) %>% 
+  pull(ticker) %>% 
+  tq_get(from = from_date, to = to_date) %>% 
+  select(ticker = symbol, date, adjusted) %>% 
+  group_by(ticker) %>% 
+  mutate(daily_return = adjusted/lag(adjusted, 1) - 1) %>% 
+  summarise(yearly_sd = sd(daily_return, na.rm = T),
+            yearly_return  = last(adjusted)/first(adjusted) -1) %>% 
+  left_join(holdings_tibble)
+}
+```
+
+Test the function on one year of holdings.
+
+
+```{r}
+
+spy_holding_jan_2019 <- 
+  spy_holdings_list %>% 
+  .[["2019"]]  
+
+get_yearly_returns_sd(spy_holding_jan_2019, 2019, 10)
+```
+
+Create a vector of years that we can map over and efficiently grab prices, returns summary stats over multiple years.
+
+```{r}
+
+# years <- seq(2013, 2019, by = 1)
+
+# fund_weights_returns <-
+#   spy_holdings_list %>% 
+#   map_dfr(get_yearly_returns_sd, 1) %>% 
+#   group_by(date) %>% 
+#   mutate(year = year(date),
+#          weight = weight/100)
+
+# get_yearly_returns_sd(spy_holding_jan_2019, top_n_holdings = 5, year = years[7])
+
+fund_weights_returns_top_10 <-
+spy_holdings_list %>% 
+map2_dfr(years, get_yearly_returns_sd, top_n_holdings = 10) %>% 
+  group_by(date) %>% 
+  mutate(year = year(date),
+         weight = weight/100)
+
+fund_weights_returns_top_40 <-
+spy_holdings_list %>% 
+map2_dfr(years, get_yearly_returns_sd, top_n_holdings = 40) %>% 
+  group_by(date) %>% 
+  mutate(year = year(date),
+         weight = weight/100)
+
+#pin(fund_weights_returns_top_40, description = "top 40 holdings in sp500, 2013 through 2019, weights, yearly return and sd", board = "rsconnect")
+
+fund_weights_returns_top_40  <- pins::pin_get("jonathan/fund-weights-returns-top-40", board = "rsconnect")
+```
+
+
+# Visualize annual risk and returns over time
+
+```{r}
+colors <- c('#4AC6B7', '#1972A4', '#965F8A', '#FF7070', '#C61951')
+
+ax <- list(
+  title = "",
+  zeroline = FALSE,
+  showline = FALSE,
+  showticklabels = FALSE,
+  showgrid = FALSE
+)
+
+
+fund_weights_returns_top_40 %>% 
+  plot_ly(x = ~yearly_sd, y = ~yearly_return, color = ~ticker, size = ~weight, frame = ~date,
+        type = 'scatter', 
+        mode = 'markers', 
+        sizes = c(5,50),
+        marker = list(symbol = 'circle', 
+                      sizemode = 'diameter',
+                      opacity = 0.5,
+                      line = list(width = 2, 
+                                  color = '#FFFFFF')),
+        text = ~paste('ticker:', ticker, '<br>sector:', sector, 
+                      '<br>weight:', scales::percent(weight), 
+                      '<br>return:', scales::percent(yearly_return),
+                      '<br>risk:', scales::percent(yearly_sd)),
+        hoverinfo = 'text') %>%
+ # add_markers(color = ~sector, size = ~weight)
+    layout(xaxis = list(tickformat = "%", title = "risk"),
+           yaxis = list(tickformat = "%", title = "return"),
+           plot_bgcolor = "#000000",
+         paper_bgcolor = "#000000",
+         font = list(color="#ffffff"),
+      showlegend = T) %>% 
+  animation_opts(1500) %>% 
+  animation_button(visible = F) %>% 
+  config(displayModeBar = F)
+```
+
+
+```{r}
+library(ggrepel)
+year_text_repel <- 2016
+top_n_text_repel <- 20
+
+fund_weights_returns_top_40 %>% 
+  filter(year == year_text_repel) %>% 
+  arrange(desc(weight)) %>% 
+  ggplot(aes(x = yearly_sd, y = yearly_return, color = sector)) + 
+  geom_point(
+    data = function(x) top_n(x, top_n_text_repel, wt = weight),
+    aes(size = weight), 
+    alpha = 1
+  ) +
+  geom_text_repel(
+    data = function(x) top_n(x, top_n_text_repel, wt = weight), #filter(x, row_number() <= 10L),
+    aes(label = ticker),
+    point.padding = .2,
+    box.padding = .3,
+    force = 1,
+    min.segment.length = 0
+  ) +
+  geom_point(
+    data = function(x) top_n(x, -top_n_text_repel * 2, wt = weight),
+    aes(size = weight), 
+    alpha = .4
+  ) +
+  theme_minimal(14)  +
+  labs(
+    x = "risk",
+    y = "return",
+    title = paste("ishare Core SP 500 Top", top_n_text_repel, "holdings", year_text_repel, sep = " ")
+  ) +
+  theme(
+    legend.position = "none",
+    # panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+
+```{r}
+
+ivv_2018_tickers <- 
+ivv_holding_jan_2018 %>% 
+  select(ticker) %>% 
+  distinct() %>% 
+  pull()
+
+
+ivv_prices_tiingo <- 
+ivv_2018_tickers %>% 
+  riingo_prices(start_date = "2018-01-01", end_date = "2018-12-31", resample_frequency = "monthly")
+
+ivv_tickers_that_worked <- 
+ivv_prices_tiingo %>% 
+  distinct(ticker) %>% 
+  pull()
+
+problem_tickers <- 
+setdiff(ivv_2018_tickers, ivv_tickers_that_worked)
+
+problem_weight <-
+ivv_holding_jan_2018 %>% 
+  filter(ticker %in% problem_tickers) %>% 
+  summarise(sum(weight, na.rm = T)/100) %>% 
+  pull()
+```
+
+
+# Calc daily returns, spread wider, to xts
+
+```{r}
+
+ivv_2018_component_returns <-
+ivv_prices_tiingo %>% 
+  select(ticker, date, adjClose) %>% 
+  group_by(ticker) %>% 
+  mutate(daily_return = adjClose/lag(adjClose, 1) - 1) %>% 
+  select(date, ticker, daily_return) %>% 
+  pivot_wider(names_from = "ticker", values_from = "daily_return") %>% 
+  tk_xts(date_var = date)
+```
+
+# Extract weights
+
+```{r}
+  
+ivv_2018_weights <- 
+  ivv_holding_jan_2018 %>% 
+  filter(ticker %in% ivv_tickers_that_worked) %>%
+  mutate(weight = (weight/100)) %>% 
+  pull(weight)
+
+# check what they sum to
+1 - sum(ivv_2018_weights, na.rm = T)
+```
+
+We are off .0058 because of the problematic tickers. The goal of today's exercise is to understand contributions to portfolio return spread amongst 500 securities. We can live with .0058 of weighting error spread across those 500.
+
+
+```{r}
+ivv_contribution_obj <- 
+ Return.portfolio(ivv_2018_component_returns, weights = ivv_2018_weights, rebalance_on = "quarters",  verbose = TRUE)
+```
+
+
+```{r}
+
+to.period.contributions(ivv_contribution_obj$contribution, period = "years") %>% 
+  tk_tbl(preserve_index = T, rename_index = "date") %>% 
+  pivot_longer(-date, names_to = "ticker", values_to = "contribution") %>% 
+  left_join(ivv_holding_jan_2018%>% select(ticker, sector), by = c("ticker" =  "ticker")) %>% 
+  arrange(desc(contribution))
+```
+
+
+
+
+
+ 

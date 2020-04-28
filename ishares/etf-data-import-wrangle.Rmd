@@ -1,0 +1,155 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(tidyquant)
+library(rvest)
+```
+
+
+```{r}
+# Read html
+html <- read_html("vg_info.html")
+# Extract fund names
+vanguard_fund_names <- html %>%
+  html_nodes(".productName a") %>%
+  html_text()
+  
+write_rds(vanguard_fund_names, "vanguard_fund_names.RDS")
+
+# Extract tickers
+vanguard_tickers <- html %>%
+  html_nodes(".fixedCol+ .ng-binding") %>%
+  html_text()
+
+write_rds(vanguard_tickers, "vanguard_tickers.RDS")
+
+# Extract asset classes
+vanguard_asset_class <- html %>%
+  html_nodes(".assetClass") %>%
+  html_text() %>%
+  sapply(., function(x) x[!str_detect(x, "\t")]) %>%
+  unlist()
+
+write_rds(vanguard_asset_class, "vanguard_asset_class.RDS")
+
+vanguard_ticker_fund_asset_class_tibble <- 
+  tibble(
+    ticker = vanguard_tickers,
+    fund = vanguard_fund_names,
+    asset_class = vanguard_asset_class
+      
+  )
+
+write_rds(vanguard_ticker_fund_asset_class_tibble, "vanguard_ticker_fund_asset_class_tibble.RDS")
+
+library(pins)
+
+
+pins::board_register(server = "https://colorado.rstudio.com/rsc", key = "fAEzqlEWVZM8GEQAkoQiKTOYgMXrAvZ2", board = "rsconnect")
+
+pin(vanguard_ticker_fund_asset_class_tibble, description = "Vanguard tickers, funds and asset classes", board = "rsconnect")
+
+
+# Extract expense ratios
+expense_ratio <- html %>%
+  html_nodes(".expenseRatio") %>%
+  html_text()  %>%
+  sub("%", "", .) %>%
+  as.numeric() %>%
+  sapply(., '/', 100) %>%
+  sapply(., function(x) x[!is.na(x)]) %>%
+  unlist()
+# Extract price
+price <- html %>%
+  html_nodes(".expenseRatio+ .ng-binding") %>%
+  html_text()  %>%
+  sub("[$]", "", .) %>%
+  as.numeric()
+# Extract sec yield
+sec_yield <- html %>%
+  html_nodes(".secYield") %>%
+  html_text()
+sec_yield_clean <- sec_yield[!str_detect(sec_yield, "SEC")] %>%
+  str_replace_all(., "\n", "") %>%
+  str_replace_all(., "\t", "") %>%
+  str_replace_all(., "â\u0080\u0094", NA_character_)
+# Extract ytd returns
+ytd <- html %>%
+  html_nodes(".secYield+ .ng-binding") %>%
+  html_text() %>%
+  sub("%", "", .) %>%
+  as.numeric() %>%
+  sapply(., '/', 100)
+# Extract one yr returns
+one_yr <- html %>%
+  html_nodes(".ng-binding:nth-child(11)") %>%
+  html_text() %>%
+  str_replace_all(., "â\u0080\u0094", NA_character_) %>%
+  sub("%", "", .) %>%
+  as.numeric() %>%
+  sapply(., '/', 100)
+# Extract five yr returns
+five_yr <- html %>%
+  html_nodes(".ng-binding:nth-child(12)") %>%
+  html_text() %>%
+  str_replace_all(., "â\u0080\u0094", NA_character_) %>%
+  sub("%", "", .) %>%
+  as.numeric() %>%
+  sapply(., '/', 100)
+# Extract ten yr yields
+ten_yr <- html %>%
+  html_nodes(".ng-binding:nth-child(13)") %>%
+  html_text() %>%
+  str_replace_all(., "â\u0080\u0094", NA_character_) %>%
+  sub("%", "", .) %>%
+  as.numeric() %>%
+  sapply(., '/', 100)
+
+# Extract yield since inception
+since <- html %>%
+  html_nodes(".right:nth-child(14)") %>%
+  html_text() %>%
+  str_replace_all(., "\n", "") %>%
+  str_replace_all(., "\t", "") %>%
+  str_split(., "[(]") %>%
+  lapply(., head, 1) %>%
+  unlist() %>%
+  sub("%", "", .) %>%
+  as.numeric() %>%
+  sapply(., '/', 100)
+
+# Extract date of inception
+inception <-  html %>%
+  html_nodes(".right:nth-child(14)") %>%
+  html_text() %>%
+  str_replace_all(., "\n", "") %>%
+  str_replace_all(., "\t", "") %>%
+  str_split(., "[(]") %>%
+  lapply(., tail, 1) %>%
+  str_replace_all(., "[)]", "") %>%
+  unlist() %>%
+  as.Date(., "%m/%d/%Y")
+# Combine into one data frame
+fund_data <- data.frame(fund_names, ticker, asset_class,
+                        expense_ratio, price, sec_yield_clean, 
+                        ytd, one_yr, five_yr, ten_yr, since, inception,
+                        stringsAsFactors = FALSE)
+# Drop duplicate rows
+fund_data <- fund_data %>%
+  distinct()
+
+write.csv(fund_data,
+          "fund_data.csv",
+          row.names = FALSE)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+

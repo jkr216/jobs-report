@@ -1,0 +1,383 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(readxl)
+library(plotly)
+library(riingo)
+library(tidyquant)
+library(tidyverse)
+library(timetk)
+
+library(ggtext)
+riingo_set_token("97d26898fe27141ef524c1fa3ab0d3f0c3c59b09")
+
+pins::board_register(board = "rsconnect", server = "https://colorado.rstudio.com/rsc", key = "fAEzqlEWVZM8GEQAkoQiKTOYgMXrAvZ2")
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+For today we'll be analyzing the holdings of the Vanguard's total market ETF, VTI. We can grab the full holdings from Vangaurd's website [here](https://advisors.vanguard.com/investments/products/vti/vanguard-total-stock-market-etf#portfolio) and import a CSV of the fund's full holdings. 
+
+Here's a snapshot of the raw CSV. 
+
+![]()
+
+Let's import that into RStudio using `read_csv()`.
+
+```{r}
+vti_total_mkt_holdings <- 
+  read_csv("Top_holdings_Total_Stock_Market_ETF.csv", 
+           col_types = cols(COUNTRY = col_skip(), 
+                            `SECURITY DEPOSITORY RECEIPT TYPE` = col_skip(), 
+                            SEDOL = col_skip(), X1 = col_skip()), 
+           skip = 7) %>% 
+  janitor::clean_names()
+```
+
+We have 3,559 tickers and our analysis will go back about 3 years today. Let's grab those price histories using the excellent price data source [tiingo](https://www.tiingo.com/). There's an R package called `riingo` that makes it easy to access the `tiingo` API via a function called `riingo_prices()`. We'll supply the first 1000 tickers to that function and pull in 3-years of price history. 
+
+```{r, echo=FALSE}
+vti_prices_1_1500 <-  read_rds("vti_prices_1_1000.RDS")
+```
+
+
+```{r, eval=FALSE}
+# Set start and end dates for the price import
+end <- today() %>% ymd()
+start <- end - years(3)
+
+# pull tickers and pass to riingo_prices()
+vti_prices_1_1000 <-
+  vti_total_mkt_holdings %>%
+  mutate(ticker = str_replace(ticker, "BRK.B", "BRK-B")) %>%
+  slice(1:1000) %>%
+  pull(ticker) %>%
+  riingo_prices(start_date = start, end_date = end)
+
+write_rds(vti_prices_1_1000, "vti_prices_1_1000.RDS")
+
+vti_prices_1001_2000 <-
+  vti_total_mkt_holdings %>%
+  janitor::clean_names() %>%
+  # mutate(ticker = str_replace(ticker, "BRK.B", "BRK-B")) %>%
+  slice(1001:2000) %>%
+  pull(ticker) %>%
+  riingo_prices(start_date = start, end_date = end)
+
+vti_prices_1_2000 <- 
+vti_prices_1_1000 %>% 
+  bind_rows(vti_prices_1001_2000)
+```
+
+
+I have an R object that stores the more traditional exchange sector labels and maps them to several thousand tickers. Here's a peek: 
+
+```{r}
+
+exchange_tickers_sectors <- read_rds("exchange_tickers_sectors.RDS")
+
+exchange_tickers_sectors %>% 
+  head()
+```
+
+```{r}
+vti_prices_1_1000 %>% 
+  select(ticker, date, close, volume) %>% 
+  left_join(vti_total_mkt_holdings %>% select(ticker, sector), by = c("ticker" = "ticker")) %>% 
+  left_join(exchange_tickers_sectors %>% select(ticker, exchange_sector = sector)) %>%  
+  group_by(ticker) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         sma_50_greater_than_sma_200 = case_when(sma_50 > sma_200 ~ 1, 
+                                                 TRUE ~ 0),
+         current_greater_than_sma_50 = case_when(close > sma_50 ~ 1, 
+                                                 TRUE ~ 0)) %>%
+  na.omit() %>% 
+  slice(n()) %>% 
+  group_by(exchange_sector) %>% 
+  count(sma_50_greater_than_sma_200) %>%  
+  mutate(percent = n/sum(n), 
+         label = case_when(sma_50_greater_than_sma_200 == 1 ~ "sma50 above sma200", 
+                           TRUE ~ "sma50 below sma200")) %>% 
+  group_by(label) %>% 
+  filter(!(str_detect(exchange_sector, 'cash|Cash'))) %>% 
+  mutate(exchange_sector = str_wrap(exchange_sector, width = 13)) %>%
+  ggplot(aes(x = exchange_sector, y = percent, fill = label)) + 
+  geom_col(width = .3, position = position_dodge(width = .5)) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+    labs(x = "", y = "", title = "Percent SMA 50 <span style='color:blue'>above</span> or <span style='color:pink'>below</span> SMA 200", subtitle = str_glue("as of {date_filter}") ) +
+  scale_fill_manual(values = c( "blue", "pink")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        plot.title = element_markdown(hjust = .5),
+        plot.subtitle = element_text(hjust = .5))
+```
+
+
+
+```{r}
+
+vti_sma50_sma_200_for_gif <- 
+vti_prices_1_1000 %>% 
+  select(ticker, date, close, volume) %>% 
+  left_join(vti_total_mkt_holdings %>% select(ticker, sector), by = c("ticker" = "ticker")) %>% 
+  left_join(exchange_tickers_sectors %>% select(ticker, exchange_sector = sector)) %>%  
+  group_by(ticker) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         sma_50_greater_than_sma_200 = case_when(sma_50 > sma_200 ~ 1, 
+                                                 TRUE ~ 0),
+         current_greater_than_sma_50 = case_when(close > sma_50 ~ 1, 
+                                                 TRUE ~ 0)) %>%
+  na.omit() %>% 
+  filter(date > "2017-10-04") %>% 
+  group_by(exchange_sector, date) %>% 
+  count(sma_50_greater_than_sma_200) %>% 
+  mutate(percent = n/sum(n), 
+         trend = case_when(sma_50_greater_than_sma_200 == 1 ~ "sma50 above sma200", 
+                           TRUE ~ "sma50 below sma200"),
+         month = month(date)) %>% 
+  group_by(trend) %>% 
+  filter(!(str_detect(exchange_sector, 'cash|Cash'))) %>% 
+  mutate(exchange_sector = str_wrap(exchange_sector, width = 13)) %>%
+  group_by(strftime(date, "%Y-%m")) %>% #Groups by the yearmonths
+  filter(date == max(date)) %>% 
+  ungroup()
+
+write_rds(vti_sma50_sma_200, "vti_sma50_sma_200.RDS")
+
+date_choices <-
+  vti_sma50_sma_200 %>% 
+  distinct(date) %>% 
+  pull(date)
+
+write_rds(date_choices, "date_choices.RDS")
+```
+
+
+
+```{r}
+library(gganimate)
+library(gifski)
+library(png)
+
+p_1 <-  
+  vti_sma50_sma_200 %>% 
+ filter(date > "2018-01-01") %>% 
+  group_by(exchange_sector, date) %>% 
+  count(sma_50_greater_than_sma_200) %>% 
+  mutate(percent = n/sum(n), 
+         trend = case_when(sma_50_greater_than_sma_200 == 1 ~ "sma50 above sma200", 
+                           TRUE ~ "sma50 below sma200"),
+         month = month(date)) %>% 
+  group_by(trend) %>% 
+  filter(!(str_detect(exchange_sector, 'cash|Cash'))) %>% 
+  mutate(exchange_sector = str_wrap(exchange_sector, width = 13)) %>%
+  group_by(strftime(date, "%Y-%m")) %>% #Groups by the yearmonths
+  filter(date == max(date)) %>% 
+  ggplot(aes(x = exchange_sector, y = percent, fill = trend)) + 
+  geom_col(width = .3, position = position_dodge(width = .5), show.legend = F) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+    #labs(x = "", y = "", title = "Percent SMA 50 above or below SMA 200", subtitle = str_glue("as of {date}") ) +
+  scale_fill_manual(values = c( "darkgreen", "pink")) +
+  theme_minimal() +
+  transition_time(date) +
+  labs(title = "Percent SMA 50 <span style='color:darkgreen'>above</span> or <span style='color:pink'>below</span> SMA 200", subtitle = " {format(frame_time, '%Y-%m-%d')}", y= "", x = "") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        plot.title = element_markdown(hjust = .5),
+        plot.subtitle = element_text(hjust = .5))
+
+  animate(p_1, fps = 5, renderer = gifski_renderer(loop = TRUE))
+```
+
+```{r}
+p <- 
+  vti_sma50_sma_200 %>%  
+  ggplot(aes(x = exchange_sector, y = percent, fill = trend)) + 
+  geom_col(width = .3, position = position_dodge(width = .5), show.legend = F) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+    #labs(x = "", y = "", title = "Percent SMA 50 above or below SMA 200", subtitle = str_glue("as of {date}") ) +
+  scale_fill_manual(values = c( "darkgreen", "pink")) +
+  theme_minimal() +
+  transition_states(date,
+                    transition_length = 5,
+                    state_length = 5) +
+  labs(title = "Percent SMA 50 <span style='color:darkgreen'>above</span> or <span style='color:pink'>below</span> SMA 200", subtitle = " {closest_state}", y= "", x = "") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        plot.title = element_markdown(hjust = .5),
+        plot.subtitle = element_text(hjust = .5)) +
+  ease_aes('cubic-in-out')  +
+  enter_fade() +
+  exit_shrink()
+
+animate(p, fps = 5, renderer = gifski_renderer(loop = TRUE))
+```
+
+
+```{r}
+
+  
+sma50_sma200_fun <- function(price_tibble, as_of_date){
+date_filter <- as_of_date
+(
+price_tibble %>% 
+  filter(date == date_filter) %>% 
+  group_by(exchange_sector) %>% 
+  count(sma_50_greater_than_sma_200) %>%  
+  mutate(percent = n/sum(n), 
+         trend = case_when(sma_50_greater_than_sma_200 == 1 ~ "sma50 above sma200", 
+                           TRUE ~ "sma50 below sma200"),
+         tooltip_percent = scales::percent(percent),
+         month_date = strftime(date, "%Y-%m")) %>% 
+  group_by(trend) %>% 
+  filter(!(str_detect(exchange_sector, 'cash|Cash'))) %>% 
+  mutate(exchange_sector = str_wrap(exchange_sector, width = 13)) %>%
+  ggplot(aes(x = exchange_sector, y = percent, fill = trend, text = paste("sector:", exchange_sector, "<br>trend:", trend, "<br>percent", tooltip_percent))) + 
+  geom_col(width = .3, position = position_dodge(width = .5)) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+    labs(x = "", y = "", title = "Percent SMA 50 above or below SMA 200", subtitle = str_glue("as of {date_filter}") ) +
+  scale_fill_manual(values = c( "lightgreen", "pink")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        plot.title = element_text(hjust = .5),
+        plot.subtitle = element_text(hjust = .5))
+) %>% 
+  ggplotly(tooltip = "text")
+}
+
+```
+
+JKR extensions from here: 
+
+Rolling percents over time
+
+```{r}
+vti_prices_1_1000 %>% 
+  select(ticker, date, close, volume) %>% 
+  left_join(vti_total_mkt_holdings %>% select(ticker, sector), by = c("ticker" = "ticker")) %>% 
+  left_join(exchange_tickers_sectors %>% select(ticker, exchange_sector = sector)) %>%  
+  group_by(ticker) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         sma_50_greater_than_sma_200 = case_when(sma_50 > sma_200 ~ 1, 
+                                                 TRUE ~ 0),
+         current_greater_than_sma_50 = case_when(close > sma_50 ~ 1, 
+                                                 TRUE ~ 0)) %>%
+  na.omit() %>% 
+  group_by(exchange_sector, date) %>% 
+  count(sma_50_greater_than_sma_200) %>%  
+  mutate(percent = n/sum(n), 
+         trend = case_when(sma_50_greater_than_sma_200 == 1 ~ "sma50 above sma200", 
+                           TRUE ~ "sma50 below sma200")) %>% 
+  group_by(trend) %>% 
+  filter(!(str_detect(exchange_sector, 'cash|Cash'))) %>% 
+  mutate(exchange_sector = str_wrap(exchange_sector, width = 13)) %>% 
+  filter(trend == "sma50 above sma200") %>% 
+  ggplot(aes(x = date, y = percent, color = exchange_sector)) +
+  geom_line(show.legend = F) +
+  geom_hline(yintercept = .5) +
+  labs(y = "percent sma50 above sma200") +
+  scale_y_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 10)) +
+  facet_wrap(~exchange_sector)
+```
+
+```{r}
+(
+vti_prices_1_1000 %>% 
+  select(ticker, date, close, volume) %>% 
+  left_join(vti_total_mkt_holdings %>% select(ticker, sector), by = c("ticker" = "ticker")) %>% 
+  left_join(exchange_tickers_sectors %>% select(ticker, exchange_sector = sector)) %>%  
+  group_by(ticker) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         sma_50_greater_than_sma_200 = case_when(sma_50 > sma_200 ~ 1, 
+                                                 TRUE ~ 0),
+         current_greater_than_sma_50 = case_when(close > sma_50 ~ 1, 
+                                                 TRUE ~ 0)) %>%
+  na.omit() %>% 
+  group_by(exchange_sector, date) %>% 
+  count(sma_50_greater_than_sma_200) %>%  
+  mutate(percent = n/sum(n), 
+         trend = case_when(sma_50_greater_than_sma_200 == 1 ~ "sma50 above sma200", 
+                           TRUE ~ "sma50 below sma200")) %>% 
+  group_by(trend) %>% 
+  filter(!(str_detect(exchange_sector, 'cash|Cash'))) %>% 
+  mutate(exchange_sector = str_wrap(exchange_sector, width = 13),
+         date = ymd(date)) %>% 
+  filter(trend == "sma50 above sma200") %>% 
+  ggplot(aes(x = date, y = percent, color = exchange_sector)) +
+  geom_line(show.legend = F) +
+  geom_hline(yintercept = .5) +
+  labs(title = "percent sma 50 above sma 200", y = "", x = "") +
+  scale_y_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_date(breaks = scales::pretty_breaks(n = 10)) +
+  theme(axis.text.x = element_text(angle = 60))
+) %>% 
+  ggplotly()
+```
+
+choose different metrics, like current price above SMA or rolling volumes. 
+choose your date where you'd like to see this stat
+rolling over time by sector, where the line is percentage above, and maybe negative line for percentage below? or all lines one chart by color for sector
+over lay future returns - is this giving us a signal for the index? can we find a sector rotation or trading strategy here? like, top three sector percentages, rotate towards those.
+
+```{r}
+ivv_holdings <- 
+read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "ivv", 
+         download_date = ymd(Sys.Date()),
+         Ticker = str_replace(Ticker, "BRKB", "BRK-B"))
+
+# ivv_prices <- 
+# ivv_holdings %>% 
+#   slice(1:500) %>% 
+#   pull(Ticker) %>% 
+#   tq_get(get = "stock.prices", from = "2019-01-01") %>% 
+#   left_join(ivv_holdings %>% select(Ticker, Sector), by = c("symbol" = "Ticker"))
+
+
+#write_rds(ivv_prices, "ivv_prices.RDS")
+
+ivv_prices %>% 
+  distinct(symbol)
+
+ivv_prices %>% 
+  group_by(symbol) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         short_greater_than_long = case_when(sma_50 > sma_200 ~ 1, 
+                                   TRUE ~ 0),
+         current_greater_than_short = case_when(close > sma_50 ~ 1, 
+                                   TRUE ~ 0)) %>% 
+  slice(n()) %>% 
+  select(symbol, Sector, short_greater_than_long) %>% 
+  group_by(Sector) %>% 
+  count(short_greater_than_long) %>% 
+  #ungroup() %>% 
+  mutate(percent = n/sum(n), 
+         label = case_when(short_greater_than_long == 0 ~ "sma50 below sma200", 
+                           TRUE ~ "sma50 above sma200")) %>% 
+  group_by(label) %>% 
+  # mutate(Sector = case_when(Sector == "Information Technology" ~ "Info Tech",
+  #                           Sector == "Consumer Discretionary" ~ "Cons Disc",
+  #                           Sector == "Communication" ~ "Communic",
+  #                           Sector == "Consumer Staples" ~ "Cons Staples",
+  #                           TRUE ~ Sector)) %>%
+  filter(Sector != "Cash and/or Derivatives") %>% 
+  mutate(Sector = str_wrap(Sector, width = 10)) %>%
+  ggplot(aes(x = Sector, y = percent, fill = label)) + 
+  geom_col(width = .3, position = position_dodge(width = .5)) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+    labs(x = "", y = "", title = "Percent SMA 50 above or below SMA 200", subtitle = "by sector" ) +
+  scale_fill_manual(values = c( "blue", "pink")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        plot.title = element_text(hjust = .5),
+        plot.subtitle = element_text(hjust = .5))
+```
+

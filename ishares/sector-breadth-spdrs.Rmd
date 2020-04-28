@@ -1,0 +1,227 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r setup}
+library(readxl)
+library(plotly)
+library(riingo)
+library(roll)
+library(tidyquant)
+library(tidyverse)
+library(timetk)
+
+riingo_set_token("97d26898fe27141ef524c1fa3ab0d3f0c3c59b09")
+
+pins::board_register(board = "rsconnect", server = "https://colorado.rstudio.com/rsc", key = "fAEzqlEWVZM8GEQAkoQiKTOYgMXrAvZ2")
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+
+```{r}
+url <- "https://www.ssga.com/us/en/individual/etfs/library-content/products/fund-data/etfs/us/holdings-daily-us-en-xrt.xlsx"
+destfile <- "holdings_daily_us_en_xrt.xlsx"
+curl::curl_download(url, destfile)
+xrt_holdings <- read_excel(destfile, 
+    col_types = c("text", "text", "skip", 
+        "skip", "numeric", "text", "numeric", 
+        "skip"), skip = 4) %>% 
+  na.omit()
+
+```
+
+```{r}
+url <- "https://www.ssga.com/us/en/individual/etfs/library-content/products/fund-data/etfs/us/holdings-daily-us-en-xlf.xlsx"
+destfile <- "holdings_daily_us_en_xrt.xlsx"
+curl::curl_download(url, destfile)
+xlf_holdings <- read_excel(destfile, 
+    col_types = c("text", "text", "skip", 
+        "skip", "numeric", "text", "numeric", 
+        "skip"), skip = 4) %>% 
+  na.omit()
+
+```
+
+
+```{r}
+spdr_import_fun <- function(fund_ticker){
+  
+url <- paste("https://www.ssga.com/us/en/individual/etfs/library-content/products/fund-data/etfs/us/holdings-daily-us-en-", fund_ticker, ".xlsx", sep = "")
+
+destfile <- paste("holdings_daily_us_en_", fund_ticker, ".xlsx", sep = "")
+
+curl::curl_download(url, destfile)
+
+read_excel(destfile, 
+    col_types = c("text", "text", "skip", 
+        "skip", "numeric", "text", "numeric", 
+        "skip"), skip = 4) %>% 
+  na.omit() %>% 
+  mutate(Ticker = str_replace(Ticker, "BRK.B", "BRK-B"))
+}
+
+xle_holdings <- spdr_import_fun("xle")
+xlp_holdings <- spdr_import_fun("xlp")
+xlf_holdings <- spdr_import_fun("xlf")
+xlu_holdings <- spdr_import_fun("xlu")
+```
+
+```{r}
+xlu_holdings %>% 
+  pull(Ticker) 
+```
+
+
+```{r}
+xlp_prices <- 
+  xlp_holdings %>% 
+  pull(Ticker) %>% 
+  riingo_prices(start_date = "2019-01-01")
+
+xlf_prices <- 
+  xlf_holdings %>% 
+  pull(Ticker) %>% 
+  riingo_prices(start_date = "2019-01-01")
+
+
+xlf_prices %>% 
+  group_by(ticker) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         short_greater_than_long = case_when(sma_50 > sma_200 ~ 1, 
+                                   TRUE ~ 0),
+         current_greater_than_short = case_when(close > sma_50 ~ 1, 
+                                   TRUE ~ 0)) %>% 
+  slice(n()) %>% 
+  select(ticker, short_greater_than_long) %>% 
+  group_by(short_greater_than_long) %>% 
+  count() %>%  
+  ungroup() %>% 
+  mutate(percent = n/sum(n), 
+         label = case_when(short_greater_than_long == 0 ~ "sma50 below sma200", 
+                           TRUE ~ "sma50 above sma200")) %>% 
+  ggplot(aes(x = label, y = percent, fill = label)) +
+  geom_col(width = .3) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+  theme_minimal()
+```
+
+
+```{r}
+xlp_prices %>% 
+  group_by(ticker) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         short_greater_than_long = case_when(sma_50 > sma_200 ~ 1, 
+                                   TRUE ~ 0),
+         current_greater_than_short = case_when(close > sma_50 ~ 1, 
+                                   TRUE ~ 0)) %>% 
+  slice(n()) %>% 
+  select(ticker, short_greater_than_long, current_greater_than_short) %>% 
+  ungroup() %>% 
+  pivot_longer(-ticker, names_to = "metric", values_to = "flag") %>% 
+  group_by(metric, flag) %>% 
+  count() %>% 
+  group_by(metric) %>% 
+  mutate(percent = n/sum(n)) %>% 
+  filter(flag == 1) %>% 
+  ggplot(aes(x = metric, y = percent)) +
+  geom_col(width = .3, fill = "cornflowerblue") +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+  theme_minimal()
+```
+
+
+```{r}
+
+sma50_sma200_fun <- function(price_tibble){
+price_tibble %>% 
+  group_by(ticker) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         short_greater_than_long = case_when(sma_50 > sma_200 ~ 1, 
+                                   TRUE ~ 0),
+         current_greater_than_short = case_when(close > sma_50 ~ 1, 
+                                   TRUE ~ 0)) %>% 
+  slice(n()) %>% 
+  select(ticker, short_greater_than_long) %>% 
+  group_by(short_greater_than_long) %>% 
+  count() %>%  
+  ungroup() %>% 
+  mutate(percent = n/sum(n), 
+         label = case_when(short_greater_than_long == 0 ~ "% sma50 below sma200", 
+                           TRUE ~ "% sma50 above sma200")) %>% 
+  ggplot(aes(x = label, y = percent, fill = label)) +
+  geom_col(width = .3, show.legend = F) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+    labs(x = "", y = "", title = "Percent above/below long term avg" ) +
+  theme_minimal()
+}
+
+sma50_sma200_fun(xlp_prices)
+```
+
+
+
+```{r}
+ivv_holdings <- 
+read_csv("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund", 
+    col_types = cols(ISIN = col_skip(), SEDOL = col_skip()), 
+    skip = 10) %>% 
+  mutate(fund = "ivv", 
+         download_date = ymd(Sys.Date()),
+         Ticker = str_replace(Ticker, "BRKB", "BRK-B"))
+
+# ivv_prices <- 
+# ivv_holdings %>% 
+#   slice(1:500) %>% 
+#   pull(Ticker) %>% 
+#   tq_get(get = "stock.prices", from = "2019-01-01") %>% 
+#   left_join(ivv_holdings %>% select(Ticker, Sector), by = c("symbol" = "Ticker"))
+
+
+write_rds(ivv_prices, "ivv_prices.RDS")
+
+ivv_prices %>% 
+  distinct(symbol)
+
+ivv_prices %>% 
+  group_by(symbol) %>% 
+  mutate(sma_50 = roll_mean(as.matrix(close), 50, complete_obs = T),
+         sma_200 = roll_mean(as.matrix(close), 200, complete_obs = T),
+         short_greater_than_long = case_when(sma_50 > sma_200 ~ 1, 
+                                   TRUE ~ 0),
+         current_greater_than_short = case_when(close > sma_50 ~ 1, 
+                                   TRUE ~ 0)) %>% 
+  slice(n()) %>% 
+  select(symbol, Sector, short_greater_than_long) %>% 
+  group_by(Sector) %>% 
+  count(short_greater_than_long) %>% 
+  #ungroup() %>% 
+  mutate(percent = n/sum(n), 
+         label = case_when(short_greater_than_long == 0 ~ "sma50 below sma200", 
+                           TRUE ~ "sma50 above sma200")) %>% 
+  group_by(label) %>% 
+  # mutate(Sector = case_when(Sector == "Information Technology" ~ "Info Tech",
+  #                           Sector == "Consumer Discretionary" ~ "Cons Disc",
+  #                           Sector == "Communication" ~ "Communic",
+  #                           Sector == "Consumer Staples" ~ "Cons Staples",
+  #                           TRUE ~ Sector)) %>%
+  filter(Sector != "Cash and/or Derivatives") %>% 
+  mutate(Sector = str_wrap(Sector, width = 10)) %>%
+  ggplot(aes(x = Sector, y = percent, fill = label)) + 
+  geom_col(width = .3, position = position_dodge(width = .5)) +
+  scale_y_continuous(labels = scales::percent_format(), breaks = scales::pretty_breaks(n = 10)) +
+  scale_fill_manual(values = c( "blue", "pink")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        plot.title = element_text(hjust = .5),
+        plot.subtitle = element_text(hjust = .5)) 
+```
+

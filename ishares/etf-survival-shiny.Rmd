@@ -1,0 +1,69 @@
+---
+title: "Returns Distribution"
+runtime: shiny
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    source_code: embed
+---
+
+
+```{r setup, message = FALSE}
+library(tidyverse)
+library(plotly)
+library(tidyquant)
+library(timetk)
+
+etf_launch_close_tibble <- read_rds("etf_launch_close_tibble.RDS")
+
+```
+
+Sidebar {.sidebar}
+=====================================
+  
+```{r}
+
+selectInput("launch_year", "Launch Year", choices = c("2012", "2013", "2014", "2015", "2016", "2017"))
+
+
+numericInput("number_funds", "Number of funds", 10, min = 1, max = 100)
+
+
+```
+
+Returns
+=====================================  
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Funds survial
+
+```{r}
+renderPlotly({
+  
+  num_funds <- input$number_funds
+  
+  (
+  etf_launch_close_tibble %>% 
+  top_n(-num_funds, survival_time) %>%
+  filter(launch_year == input$launch_year) %>% 
+  ggplot(aes(x = ticker, y = survival_time, fill = ticker, text = fund)) +
+  geom_bar(stat='identity', width = .7) +
+  coord_flip() +
+  geom_text(
+    aes(label = survival_time, y = survival_time - 20), 
+    color = "white", 
+    size = 5, 
+    hjust = 1
+  )  +
+  cowplot::theme_minimal_vgrid(16) +
+    ylab("days survived") +
+  ggtitle(paste(num_funds, " Fastest Funds to Die, launched in ", input$launch_year, sep = "")) +
+  theme(
+    axis.title.y = element_blank(), 
+    legend.position = "none") 
+  ) %>% 
+    ggplotly(tooltip = "text")
+})
+```
