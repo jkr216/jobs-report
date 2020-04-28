@@ -105,7 +105,7 @@ bea_gdp_api %>%
   count()
 ```
 
-We have 21 accounts or groups. Note there is both `Gross domestic product` and `Gross domestic product, current dollars`, in case that matters to your use case. What are the other 19 groups? They are the sub accounts that comprise GDP. Note that n = 855 for the `Goods` account and the `Services` account, but we have only 285 quarters of data. That's because there are 3 accounts called `Goods` and `Services` (we'll look at these three below). 
+We have 21 accounts or groups. Note there is both `Gross domestic product` and `Gross domestic product, current dollars`, in case that matters to your use case. What are the other 19 groups? They are the sub accounts that comprise GDP. Note that n = 855 for the `Goods` account and the `Services` account, but we have only 289 quarters of data. That's because there are 3 accounts called `Goods` and `Services` (we'll look at these three below). 
 
 We can look at the `Goods` accounts by `SeriesCode`.
 
@@ -164,7 +164,8 @@ bea_gdp_wrangled <-
                          SeriesCode == "DPCERL" ~ "PCE",
                          TRUE ~ .$account)) %>% 
   group_by(account) %>% 
-  select(-SeriesCode)
+  select(-SeriesCode) %>% 
+  arrange(account, quarter)
 
 bea_gdp_wrangled %>% 
   count()
@@ -207,7 +208,7 @@ mutate(col_blue =
 ```
 
 
-That's a nice look at GDP quarterly change since 2008, but let's go a bit deeper and visualize the 4 top level components of GDP, which are personal consumption, net exports (or imports and exports), private investment and government spending. Here is how each changed in Q2 2018.
+That's a nice look at GDP quarterly change since 2008, but let's go a bit deeper and visualize the 4 top level components of GDP, which are personal consumption, net exports (or imports and exports), private investment and government spending. Here is how each changed in Q2 2019.
 
 ```{r}
 bea_gdp_wrangled %>% 
@@ -217,7 +218,7 @@ bea_gdp_wrangled %>%
          account == "Exports" |
          account == "Imports" |
          account == "Govt") &
-        quarter == last(quarter)) %>% 
+        quarter == max(quarter)) %>% 
    mutate(col_blue = 
            if_else(percent_change > 0, 
                   percent_change, as.numeric(NA)),
@@ -235,7 +236,7 @@ bea_gdp_wrangled %>%
                fill = "cornflowerblue", 
                color = "cornflowerblue",
                width = .5) +
-  labs(title = paste(last(bea_gdp_api$quarter), 
+  labs(title = paste(max(bea_gdp_api$quarter), 
                      "GDP Change", 
                      sep = " "),
        subtitle = "by account, and total", 
@@ -354,12 +355,12 @@ First, let's take a look at how the 4 top level components - net exports, consum
   
 bea_gdp_contributions_wrangled %>% 
   filter(
-    (account == "GDP" |
+    (#account == "GDP" |
     account == "PCE" |
     account == "Investment" |
     account == "Govt" |
     account == "Net Exports") &
-    quarter == last(quarter)) %>% 
+    quarter == max(quarter)) %>% 
    mutate(col_blue = 
            if_else(percent_change > 0, 
                   percent_change, as.numeric(NA)),
@@ -377,7 +378,7 @@ bea_gdp_contributions_wrangled %>%
                fill = "cornflowerblue", 
                color = "cornflowerblue",
                width = .5) +
-  labs(title = paste(last(bea_gdp_contributions_wrangled$quarter), 
+  labs(title = paste(max(bea_gdp_contributions_wrangled$quarter), 
                      "GDP Change Second Level", 
                      sep = " "),
        subtitle = "by account, and total", 
@@ -398,7 +399,7 @@ We see that consumption and next exports led the way in Q2. Let's delve one leve
   
 bea_gdp_contributions_wrangled %>% 
   filter(
-    (account == "GDP" |
+    (#account == "GDP" |
        # PCE
        account == "Goods" |
        account == "Services" |
@@ -411,7 +412,7 @@ bea_gdp_contributions_wrangled %>%
        # Net Exports
        account == "Exports" |
        account == "Imports") &
-      quarter == last(quarter)) %>% 
+      quarter == max(quarter)) %>% 
    mutate(col_blue = 
            if_else(percent_change > 0, 
                   percent_change, as.numeric(NA)),
@@ -429,7 +430,7 @@ bea_gdp_contributions_wrangled %>%
                fill = "cornflowerblue", 
                color = "cornflowerblue",
                width = .5) +
-  labs(title = paste(last(bea_gdp_contributions_wrangled$quarter), 
+  labs(title = paste(max(bea_gdp_contributions_wrangled$quarter), 
                      "GDP Change Second Level", 
                      sep = " "),
        subtitle = "by account, and total", 
@@ -451,7 +452,7 @@ Why stop now - let's break things down to the next level.
 
   bea_gdp_contributions_wrangled %>% 
   filter(
-    (account == "GDP" |
+    (#account == "GDP" |
        # PCE goods
        account == "Durable goods" |
        account == "Nondurable goods" |
@@ -472,7 +473,7 @@ Why stop now - let's break things down to the next level.
        account == "Export services" |
        account == "Import goods" |
        account == "Import services") &
-      quarter == last(quarter)) %>% 
+      quarter == max(quarter)) %>% 
    mutate(col_blue = 
            if_else(percent_change > 0, 
                   percent_change, as.numeric(NA)),
@@ -490,7 +491,7 @@ Why stop now - let's break things down to the next level.
                fill = "cornflowerblue", 
                color = "cornflowerblue",
                width = .5) +
-  labs(title = paste(last(bea_gdp_contributions_wrangled$quarter), 
+  labs(title = paste(max(bea_gdp_contributions_wrangled$quarter), 
                      "GDP Change Second Level", 
                      sep = " "),
        subtitle = "by account, and total", 

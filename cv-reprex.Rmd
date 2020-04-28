@@ -1,0 +1,294 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(coronavirus)
+library(tidyverse)
+library(incidence)
+library(ggthemes)
+library(plotly)
+# filter global data for region of interest
+
+```
+
+```{r}
+coronavirus_dataset <- read_csv("https://github.com/RamiKrispin/coronavirus-csv/raw/master/coronavirus_dataset.csv")
+
+```
+
+
+
+```{r}
+df_usa <-
+  coronavirus %>%
+  filter(Country.Region == "US",
+         !Province.State %in% c("Diamond Princess", "Grand Princess"))
+
+df_usa %>%
+filter(type == "confirmed") %>%
+group_by(date) %>%
+summarise(incident_cases = sum(cases)) %>%
+mutate(cumulative_cases = cumsum(incident_cases)) %>%
+ggplot() +
+geom_area(aes(x = date, y = cumulative_cases), stat = "identity", fill = "sienna")+
+geom_bar(aes(x = date, y = incident_cases), stat = "identity", fill = "blue") +
+labs(y = "", title = "COVID-19 Cases", x = "") +
+theme_pander() 
+
+```
+
+```{r}
+df_usa %>%
+  select(date, type, everything(), -Province.State) %>% 
+arrange(date) %>%
+group_by(date, type) %>%
+summarise(cases = sum(cases)) %>%
+pivot_wider(date, names_from = "type", values_from = "cases") %>%
+ungroup() %>%
+mutate(
+  active = confirmed - death,# - recovered,
+confirmed_cum = cumsum(confirmed),
+death_cum = cumsum(death),
+# recovered_cum = cumsum(recovered),
+active_cum = cumsum(active)) %>%
+select(date, 
+       active_cum, 
+       # recovered_cum, 
+       death_cum) %>%
+pivot_longer(-date, names_to = "type", values_to = "cases") %>%
+ggplot(aes(x = date, y = cases, colour = type)) +
+geom_line(size = 1.5) +
+scale_color_hue() +
+labs(y = "Cumulative Cases", title = "Cumulative Active and Death Cases") +
+  theme_pander()
+```
+
+Let's filter our full data down to confirmed cases and sum them according to date. 
+
+```{r}
+df_confirmed <- 
+  df_usa %>%
+  filter(type == "confirmed") %>%
+  group_by(date) %>%
+  summarise(incident_cases = sum(cases))
+```
+
+Next we create an object of class `incidence` using the `incidence()` function.  Suppose we wished to view the incidence by week, or every 7 days. The `incidence()` function wants a vector of observation so we `pull()` the `incident_cases` column from our `df_confirmed` tibble.
+
+```{r}
+
+dates_cases_tbl <- 
+  rep(df_confirmed$date, df_confirmed$incident_cases) %>% 
+  enframe(name = "day_num") %>% 
+  rename(date_of_obs = value) %>% 
+  group_by(date_of_obs) %>% 
+  mutate(total_cases_on_date = length(day_num))
+
+dates_cases_tlb
+```
+We went through reorganizing the data in a `date_cases_tbl` that we could `filter()` by the `date_of_obs` column inside our call to the `incidence()` function. I prefer this because we can see the dates more clearly and it will help with Shiny later when we want to sort by date, not by row index.
+
+```{r}
+days_interval <- 2
+start_date <- lubridate::ymd("2020-02-20")
+
+incidence(dates_cases_vector %>% filter(date_of_obs > start_date) %>% pull(date_of_obs), interval = days_interval) %>% 
+  plot(color = "blue") +
+  labs(y = "", title = str_glue("Incidence Every {days_interval} Days"), caption = "source: rami's package") +
+  xlim(start_date, lubridate::ymd("2020-03-30")) +
+  theme_pander()
+```
+
+```{r}
+early_mod_start_date <- lubridate::ymd("2020-03-02")
+early_mod_end_date <- lubridate::ymd("2020-03-11")
+
+jkr_early_fit <-
+  fit(incidence(dates_cases_vector %>% filter(between(date_of_obs, early_mod_start_date, early_mod_end_date)) %>% pull(date_of_obs)), split = NULL)
+
+```
+
+Let's pass our results to `ggplot()` and look at the predicted values, along with lower and upper confidence intervals.
+
+```{r}
+jkr_early_fit$info$pred %>% 
+  select(-dates.x) %>% 
+  pivot_longer(-dates, names_to = "type", values_to = "result") %>% 
+  ggplot(aes(x = dates, y = result, color = type, linetype = type)) + 
+  geom_line() 
+```
+
+We can add data from our `df_confirmed` table so we can compare the predicted levels to actual levels.
+
+```{r}
+jkr_early_fit$info$pred %>% 
+  select(-dates.x) %>% 
+  pivot_longer(-dates, names_to = "type", values_to = "result") %>% 
+  ggplot(aes(x = dates, y = result, color = type, linetype = type)) + 
+  geom_line() +
+  geom_bar(data = df_confirmed %>% filter(date >= early_mod_start_date, date <= early_mod_end_date), 
+           aes(x = date, weight = incident_cases),
+           alpha = .7,
+           fill = "lightgrey", 
+           inherit.aes = FALSE) +
+labs(y = "", x = "", title = "Confirmed Cases v. Early Model Prediction") +
+scale_x_date(labels = scales::date_format("%d %b %Y")) +
+ggthemes::theme_pander()
+```
+
+Since the model results are stored in a standard `model` object, we can use `tidy()` from the `broom` package to view our coefficients.
+
+```{r}
+
+jkr_early_fit$model %>% 
+  broom::tidy()
+```
+
+Let's pull out the coefficients for each of our terms, the date and the intercept and save them as separate variables. 
+
+```{r}
+early_model_date_coefficient <- 
+  jkr_early_fit$model %>% 
+  broom::tidy() %>% 
+  filter(term == "dates.x") %>% 
+  pull(estimate)
+
+early_model_intercept_coefficient <- 
+  jkr_early_fit$model %>% 
+  broom::tidy() %>% 
+  filter(term == "(Intercept)") %>% 
+  pull(estimate)
+
+
+```
+
+Now let's use those coefficients to get predictions from our model. First we determine many periods we want to forecast, and use that number to build a sequence of dates.
+
+```{r}
+n_forecasts <- 
+  as.numeric(difftime(max(df_confirmed$date), jkr_early_fit$origin, units = "days")) + 1
+
+forecast_dates <- seq.Date(from = jkr_early_fit$origin, length.out = n_forecasts, by = "days")
+
+early_model_predictions <- exp(early_model_intercept_coefficient + early_model_date_coefficient * (0:(n_forecasts - 1)))
+
+model_pred_df <- tibble(date = forecast_dates, prediction = early_model_predictions)
+```
+
+
+```{r}
+ggplot() +
+geom_bar(data = df_confirmed %>% filter(date >= jkr_early_fit$origin),
+aes(x = date, y = incident_cases), stat = "Identity", fill = "darkgray") +
+geom_line(data = model_pred_df, aes(x = date, y = prediction), size = 1L, colour = "blue") +
+labs(y = "Incidence", title = "Actual and Predicted Incidence Rates") +
+ggthemes::theme_pander()
+```
+Now let's fit a model to our entire data set. We do this by setting a start date to the same as our early model with `early_mod_start_date` but extending our end date to today, with `Sys.Date()`. 
+
+```{r}
+
+jkr_current_fit <-
+  fit(incidence(dates_cases_vector %>% filter(between(date_of_obs, early_mod_start_date, Sys.Date())) %>% pull(date_of_obs)), split = NULL)
+
+```
+
+
+```{r}
+
+jkr_current_fit$info$pred %>% 
+  select(-dates.x) %>% 
+  pivot_longer(-dates, names_to = "type", values_to = "result") %>% 
+  ggplot(aes(x = dates, y = result, color = type, linetype = type)) + 
+  geom_line() +
+  geom_bar(data = df_confirmed %>% filter(date >= start_date), 
+           aes(x = date, weight = incident_cases),
+           alpha = .7,
+           fill = "lightgrey", 
+           inherit.aes = FALSE) +
+labs(y = "", x = "", title = "Confirmed Cases v. Model Prediction") +
+scale_x_date(labels = scales::date_format("%d %b %Y")) +
+ggthemes::theme_pander()
+```
+
+
+Let's use `tidy()` from the `broom` package to glance at our coefficients.
+
+```{r}
+
+jkr_current_fit$model %>% 
+  broom::tidy()
+```
+
+Let's pull out the coefficients for each of our terms, the date and the intercept.
+
+```{r}
+jkr_current_model_date_coefficient <- 
+  jkr_current_fit$model %>% 
+  broom::tidy() %>% 
+  filter(term == "dates.x") %>% 
+  pull(estimate)
+
+jkr_current_model_intercept_coefficient <- 
+  jkr_current_fit$model %>% 
+  broom::tidy() %>% 
+  filter(term == "(Intercept)") %>% 
+  pull(estimate)
+
+
+```
+
+We will extend our forecast out to 4 days in the future, instead of just 1 day as we did previously. 
+
+```{r}
+n_forecasts <- 
+  as.numeric(difftime(max(df_confirmed$date), jkr_current_fit$origin, units = "days")) + 4
+
+forecast_dates <- seq.Date(from = jkr_current_fit$origin, length.out = n_forecasts, by = "days")
+
+current_model_predictions <- exp(jkr_current_model_intercept_coefficient + jkr_current_model_date_coefficient * (0:(n_forecasts - 1)))
+
+early_model_predictions_extended <- exp(early_model_intercept_coefficient + early_model_date_coefficient * (0:(n_forecasts - 1)))
+
+model_pred_tbl <- 
+  tibble(date = forecast_dates,
+         early_model = early_model_predictions_extended,
+         current_model = current_model_predictions)
+
+plot_data_tbl <- left_join(model_pred_tbl, df_confirmed)
+
+```
+
+
+
+```{r}
+ggplot() +
+  geom_bar(
+    data = plot_data_tbl,
+    aes(x = date, y = incident_cases),
+    stat = "Identity",
+    fill = "darkgray"
+  ) +
+  geom_line(data = plot_data_tbl,
+            aes(x = date, y = early_model, color = "Early Model"),
+            size = 1L) +
+  geom_line(
+    data = plot_data_tbl,
+    aes(x = date, y = current_model, color = "Current Model"),
+    size = 1L
+  ) +
+  labs(y = "Incidence", title = "Actual and Predicted Incidence Rates", color = 'Model') +
+  scale_color_manual(values = c('Early Model' = 'darkblue',
+                                'Current Model' = 'orange')) +
+  xlim(jkr_current_fit$origin, lubridate::ymd("2020-03-30")) +
+  ggthemes::theme_pander()
+```
+Finally, let's take a look at how our early model and current model compare in their predictions for the next few days.
+
+```{r}
+plot_data_tbl %>% 
+  tail(7)
+```
+

@@ -20,6 +20,8 @@ library(RcppRoll)
 
 
 ```{r}
+
+
 states_hpi <- 
   read_excel("states-hpi.xls", 
         col_types = c("text", "numeric", "numeric", 
@@ -46,7 +48,7 @@ states_hpi <-
   # parse the date with lubridate
   mutate(date = ymd(parse_date_time(as.character(Month), "%Y%m"))) %>% 
   select(date, everything(), -Month) %>% 
-  gather(state, hpi, -date) %>% 
+  pivot_longer(-date, names_to = "state", values_to = "hpi") %>% 
   group_by(state) %>%
   # use lag
   mutate(hpa12 = hpi/lag(hpi, 12) - 1,
@@ -82,26 +84,98 @@ state_emp_pop_perm_data <- tq_get(my_state_codes,
 # Get national data
 # employment via FRED
 nat_emp_date <-
-  tq_get("PAYEMS"
+  tq_get("PAYEMS",
         get = "economic.data", 
         from = "2016-06-01") %>% 
   mutate(emp_growth = Delt(price, k = 12))
 
+```
 
-recessions.df = read.table(textConnection(
-  "Peak, Trough
-  1948-11-01, 1949-10-01
-  1953-07-01, 1954-05-01
-  1957-08-01, 1958-04-01
-  1960-04-01, 1961-02-01
-  1969-12-01, 1970-11-01
-  1973-11-01, 1975-03-01
-  1980-01-01, 1980-07-01
-  1981-07-01, 1982-11-01
-  1990-07-01, 1991-03-01
-  2001-03-01, 2001-11-01
-  2007-12-01, 2009-06-01"), sep=',',
-  colClasses = c('Date', 'Date'), header = TRUE)
 
+
+```{r}
+# recession plot
+recessions <- 
+tribble(
+  ~Peak, ~Trough,
+  "1948-11-01", "1949-10-01",
+  "1953-07-01", "1954-05-01",
+  "1957-08-01", "1958-04-01",
+  "1960-04-01", "1961-02-01",
+  "1969-12-01", "1970-11-01",
+  "1973-11-01", "1975-03-01",
+  "1980-01-01", "1980-07-01",
+  "1981-07-01", "1982-11-01",
+  "1990-07-01", "1991-03-01",
+  "2001-03-01", "2001-11-01",
+  "2007-12-01", "2009-06-01",
+  "2020-02-01", "2020-05-01"
+  ) %>% 
+  mutate(Peak = ymd(Peak),
+         Trough = ymd(Trough))
+
+
+recession_shade <- 
+  geom_rect(data = recessions, 
+            inherit.aes = F, 
+            aes(xmin = Peak, 
+                xmax = Trough, 
+                ymin = -Inf, 
+                ymax = +Inf), 
+            fill = 'pink', 
+            alpha = 0.5)
+```
+
+
+```{r}
+# load data ----
+
+# get data via BLS.gov
+df_st   <-
+  fread(
+    "https://download.bls.gov/pub/time.series/sm/sm.data.55.TotalNonFarmStateWide.All"
+  )
+
+df_series <-
+  fread("https://download.bls.gov/pub/time.series/sm/sm.series")
+df_area <-
+  fread(
+    "https://download.bls.gov/pub/time.series/sm/sm.area",
+    col.names = c("area_code", "area_name", "blank")
+  )
+
+df_state <-
+  fread(
+    "https://download.bls.gov/pub/time.series/sm/sm.state",
+    col.names = c("state_code", "state_name", "blank")
+  )
+
+# add a date field
+# only keep if month < 13 M13 corresponds to annual data
+df_st <- df_st[month<13,]
+df_st[,month:=as.numeric(substr(period,2,3))]
+df_st[,date:= as.Date(ISOdate(year,month,1))]
+
+dt <- 
+  left_join(df_st, df_series, by="series_id") %>% 
+  left_join(df_state, by="state_code") %>%
+  # join state abbreviations from build in vectors state.name and state.abb
+  left_join(data.frame(state_name=state.name,state_abb=state.abb), by="state_name")  %>%
+  data.table()
+
+dt.plot <- 
+  dt %>%
+  group_by(state_name) %>%
+  filter(data_type_code==1,
+         seasonal=="S",
+         area_code==0       # 0 are statewide stats
+         ) %>%
+  mutate(
+    value=as.numeric(value),
+    yoy=value/lag(value,12)-1,
+    v2001=100*value/value[date=="2001-06-01"],  # indexed to June 2001
+    vlag=lag(v2001,12)                          # index value lagged 12 months
+    ) %>%
+  data.table()
 ```
 

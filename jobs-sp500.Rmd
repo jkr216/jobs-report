@@ -1,0 +1,209 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+library(tidyverse)
+library(tidyquant)
+library(riingo)
+riingo_set_token("97d26898fe27141ef524c1fa3ab0d3f0c3c59b09")
+```
+
+### Import non farm payroll data
+
+```{r}
+codes_names_tbl <- tribble(
+        ~ symbol, ~ better_names,
+        "NPPTTL", "ADP Estimate",
+        "PAYEMS", "Nonfarm Employment",
+        "USCONS", "Construction",
+        "USTRADE",   "Retail/Trade",
+        "USPBS",  "Prof/Bus Serv",
+        "MANEMP",    "Manufact",
+        "USFIRE",    "Financial",
+        "USMINE",   "Mining",
+        "USEHS",    "Health Care",
+        "USWTRADE",    "Wholesale Trade",
+        "USTPU",    "Transportation",
+        "USINFO",    "Info Sys",
+        "USLAH",    "Leisure",
+        "USGOVT",    "Gov",
+        "USSERV",    "Other Services"
+)
+
+employ_data <- 
+  tq_get(codes_names_tbl$symbol,                         
+         get = "economic.data",             
+         from = "1990-01-01")
+
+employ_data %>% 
+  left_join(codes_names_tbl, 
+            by = "symbol" ) %>% 
+  select(better_names, everything(), -symbol) %>% 
+  group_by(better_names) %>% 
+  slice(1)
+```
+
+We have data going back to 1990 for all except ADP estimates and that's fine for today's purposes.
+
+```{r}
+employ_change_data <- 
+employ_data %>% 
+  left_join(codes_names_tbl, 
+            by = "symbol" ) %>% 
+  select(better_names, everything(), -symbol) %>% 
+  rename(employees = price, sector = better_names) %>% 
+  group_by(sector) %>% 
+  mutate(monthly_change = employees - lag(employees, 1)) %>% 
+  na.omit()
+```
+
+
+```{r}
+employ_change_data %>% 
+  filter(sector == "Nonfarm Employment") %>% 
+   mutate(col_pos = 
+           if_else(monthly_change > 0, 
+                  monthly_change, as.numeric(NA)),
+         col_neg = 
+           if_else(monthly_change < 0, 
+                  monthly_change, as.numeric(NA))) %>% 
+  select(sector, date, col_pos, col_neg) %>% 
+  head()
+```
+
+```{r}
+library(plotly)
+sector_name <- "Nonfarm Employment"
+(
+employ_change_data %>% 
+  filter(sector == sector_name) %>% 
+   mutate(col_pos = 
+           if_else(monthly_change > 0, 
+                  monthly_change, as.numeric(NA)),
+         col_neg = 
+           if_else(monthly_change < 0, 
+                  monthly_change, as.numeric(NA))) %>%
+  ggplot(aes(x = date, text = str_glue("monthly change: {monthly_change}K
+                                       {year(date)} - {month(date, label = TRUE, abbr = FALSE)}"))) +
+  geom_col(aes(y = col_neg),
+               alpha = .85,
+               fill = "pink",
+               color = "pink") +
+  geom_col(aes(y = col_pos),
+               alpha = .85,
+               fill = "lightgreen",
+               color = "lightgreen") +
+  ylab("Monthly Change (thousands)") +
+  labs(title = str_glue("Monthly {sector_name} Change"),
+       # subtitle = "since 1990",
+       caption = "inspired by @lenkiefer") +
+  scale_x_date(breaks = scales::pretty_breaks(n = 10)) +
+  theme_minimal() +
+  labs(x = "") +
+  theme(
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust=0)) 
+) %>% 
+  ggplotly(tooltip = "text")
+```
+
+```{r}
+
+sector_name <- "Leisure"
+(
+employ_change_data %>% 
+  filter(sector == sector_name) %>%
+   mutate(col_pos = 
+           if_else(monthly_change > 0, 
+                  monthly_change, as.numeric(NA)),
+         col_neg = 
+           if_else(monthly_change < 0, 
+                  monthly_change, as.numeric(NA))) %>%
+  ggplot(aes(x = date, text = str_glue("monthly change: {monthly_change}K
+                                       {year(date)} - {month(date, label = TRUE, abbr = FALSE)}"))) +
+  geom_col(aes(y = col_neg),
+               alpha = .85,
+               fill = "pink",
+               color = "pink") +
+  geom_col(aes(y = col_pos),
+               alpha = .85,
+               fill = "lightgreen",
+               color = "lightgreen") +
+  ylab("Monthly Change (thousands)") +
+  labs(title = str_glue("Monthly {sector_name} Change"),
+       # subtitle = "since 1990",
+       caption = "inspired by @lenkiefer") +
+  scale_x_date(breaks = scales::pretty_breaks(n = 10)) +
+  theme_minimal() +
+  labs(x = "") +
+  theme(
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust=0)) 
+) %>% 
+  ggplotly(tooltip = "text")
+```
+
+
+```{r}
+employ_change_data %>% 
+filter(date >= "2000-01-01") %>%
+   mutate(col_pos = 
+           if_else(monthly_change > 0, 
+                  monthly_change, as.numeric(NA)),
+         col_neg = 
+           if_else(monthly_change < 0, 
+                  monthly_change, as.numeric(NA))) %>%
+  ggplot(aes(x = date, text = str_glue("monthly change: {monthly_change}K
+                                       {year(date)} - {month(date, label = TRUE, abbr = FALSE)}"))) +
+  geom_col(aes(y = col_neg),
+               alpha = .85,
+               fill = "pink",
+               color = "pink") +
+  geom_col(aes(y = col_pos),
+               alpha = .85,
+               fill = "lightgreen",
+               color = "lightgreen") +
+  ylab("Monthly Change (thousands)") +
+  labs(title = str_glue("Monthly Change"),
+       # subtitle = "since 1990",
+       caption = "inspired by @lenkiefer") +
+  scale_x_date(breaks = scales::pretty_breaks(n = 5)) +
+  theme_minimal() +
+  labs(x = "") +
+  theme(
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust=0))  +
+  facet_wrap(~sector)
+```
+
+```{r}
+sp_500_prices <- 
+  "VFINX" %>% 
+  riingo_prices(start_date = "1990-01-01", end_date = "2020-01-31") %>%
+  select(date, adjClose) %>% 
+  mutate(month = str_glue("{year(date)}-{month(date, label = TRUE, abbr = FALSE)}")) %>% 
+  group_by(month)
+
+sp_500_monthly_returns <- 
+  sp_500_prices %>% 
+  slice(1, n()) %>% 
+  mutate(return = log(adjClose/lag(adjClose))) %>%
+  na.omit() %>% 
+  mutate(date = ymd(floor_date(date, "month"))) %>% 
+  arrange(date) %>% 
+  ungroup() %>% 
+  mutate(next_month_return = lead(return)) 
+
+employ_change_data %>% 
+left_join(sp_500_monthly_returns %>% select(date, return, adjClose, next_month_return), by = "date") %>% 
+  ggplot(aes(x = monthly_change, y = next_month_return)) + geom_point()
+
+
+```
+

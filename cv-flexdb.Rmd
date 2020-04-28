@@ -1,0 +1,152 @@
+---
+title: "CV 19"
+runtime: shiny
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    source_code: embed
+---
+
+```{r setup, message = FALSE, include=FALSE}
+
+library(coronavirus)
+library(tidyverse)
+library(incidence)
+library(ggthemes)
+library(plotly)
+library(lubridate)
+
+df_confirmed <- 
+  read_csv("https://github.com/RamiKrispin/coronavirus-csv/raw/master/coronavirus_dataset.csv") %>%
+  filter(Country.Region == "US" &
+         !Province.State %in% c("Diamond Princess", "Grand Princess") &
+           type == "confirmed") %>%
+  group_by(date) %>%
+  summarise(incident_cases = sum(cases))
+
+dates_cases_tbl <- 
+  rep(df_confirmed$date, df_confirmed$incident_cases) %>% 
+  enframe(name = "day_num") %>% 
+  rename(date_of_obs = value) %>% 
+  group_by(date_of_obs) %>% 
+  mutate(total_cases_on_date = length(day_num))
+```
+
+
+Sidebar {.sidebar}
+=====================================
+  
+```{r}
+
+dateRangeInput(
+  inputId = "early_mod_date_range",
+  "Model Date Range",
+  start = "2020-03-02",
+  end = "2020-03-11",
+  min = "2020-02-01",
+  max = Sys.Date(),
+  format = "yyyy-mm-dd"
+)
+
+numericInput(inputId = "days_forecast", label = "Days Forecast", value = 1, min = 1, max = 10, step = 1)
+
+actionButton("go", "Submit")
+
+early_mod_start_date <- eventReactive(input$go, {
+  ymd(input$early_mod_date_range[1])
+}, ignoreNULL = FALSE)
+
+early_mod_end_date <- eventReactive(input$go, {
+  ymd(input$early_mod_date_range[2])
+}, ignoreNULL = FALSE)
+
+jkr_early_fit <- eventReactive(input$go, {
+    fit(incidence(dates_cases_tbl %>% 
+                  filter(between(date_of_obs, early_mod_start_date(), early_mod_end_date())) %>%
+                  pull(date_of_obs)), 
+      split = NULL)
+}, ignoreNULL = FALSE)
+
+early_model_date_coefficient <- eventReactive(input$go, { 
+  jkr_early_fit <- jkr_early_fit()
+  jkr_early_fit$model %>% 
+  broom::tidy() %>% 
+  filter(term == "dates.x") %>% 
+  pull(estimate)
+}, ignoreNULL = FALSE)
+
+early_model_intercept_coefficient <- eventReactive(input$go, { 
+  jkr_early_fit <- jkr_early_fit()
+  jkr_early_fit$model %>% 
+  broom::tidy() %>% 
+  filter(term == "(Intercept)") %>% 
+  pull(estimate)
+}, ignoreNULL = FALSE)
+
+days_forecast <- eventReactive(input$go, { 
+  input$days_forecast
+}, ignoreNULL = FALSE)
+```
+
+Fits
+=====================================  
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+
+### Model Preds and Conf Intervals
+
+```{r}
+renderPlot({
+  
+  jkr_early_fit <- jkr_early_fit()
+    
+  
+  jkr_early_fit$info$pred %>% 
+  select(-dates.x) %>% 
+  pivot_longer(-dates, names_to = "type", values_to = "result") %>% 
+  ggplot(aes(x = dates, y = result, color = type, linetype = type)) + 
+  geom_line() +
+  geom_bar(data = df_confirmed %>% filter(date >= early_mod_start_date(), date <= early_mod_end_date()), 
+           aes(x = date, weight = incident_cases),
+           alpha = .7,
+           fill = "lightgrey", 
+           inherit.aes = FALSE) +
+labs(y = "", x = "", title = "Confirmed Cases v. Early Model Prediction") +
+scale_x_date(labels = scales::date_format("%d %b %Y")) +
+ggthemes::theme_pander()
+})
+```
+
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Forecast
+
+```{r}
+renderPlot({
+  
+jkr_early_fit <- jkr_early_fit()
+  
+n_forecasts <- 
+  as.numeric(difftime(max(df_confirmed$date), jkr_early_fit$origin, units = "days")) + days_forecast()
+
+forecast_dates <- seq.Date(from = jkr_early_fit$origin, length.out = n_forecasts, by = "days")
+
+early_model_predictions <- exp(early_model_intercept_coefficient() + early_model_date_coefficient() * (0:(n_forecasts - 1)))
+
+model_pred_df <- tibble(date = forecast_dates, prediction = early_model_predictions)
+
+ggplot() +
+geom_bar(data = df_confirmed %>% filter(date >= jkr_early_fit$origin),
+aes(x = date, y = incident_cases), stat = "Identity", fill = "darkgray") +
+geom_line(data = model_pred_df, aes(x = date, y = prediction), size = 1L, colour = "blue") +
+labs(y = "", title = "Actual and Predicted Incidence Rates") +
+xlim(jkr_early_fit$origin, lubridate::ymd("2020-03-30")) +
+ggthemes::theme_pander()
+})
+```

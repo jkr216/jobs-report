@@ -11,14 +11,14 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 library(tidyverse)
 library(tidyquant)
 #devtools::install_github("jimhester/vroom")
-library(vroom)
+# library(vroom)
 ```
 
 ### Import data via FRED and BLS
 
 One of the great things about R is that packages have been built to help us with a lot of tasks. 
 
-We will use tq.get() from the `tidyquant` package to retrieve data from FRED. First, we need to indicate what data we want.
+We will use `tq.get()` from the `tidyquant` package to retrieve data from FRED. First, we need to indicate what data we want.
 
 ```{r}
 fred_codes <- c(
@@ -182,8 +182,6 @@ eia_df_gasstorage %>%
 ### Visualizations
 
 We will use just the BLS data from here.
-
-First, a `ggplot` recession object. 
 
 
 Now we visualize our three data sets over time. `ggplot` can color each time series uniqely since we tell it to `group_by` the `dem` column. We add our recessions object that was created in the above code chunk.
@@ -395,6 +393,7 @@ ets(bls_all_ts, damped = TRUE) %>%
   forecast()%>% 
   hchart()
 ```
+
 ### Bats model
 
 ```{r}
@@ -440,20 +439,7 @@ fcast_model_tbl <-
 fcast_model_tbl
 ```
 
-Now let's run our models in one piped workflow, using `invoke_map` and `map` from `purrr`, and `tidy` from the `broom` package to clean up the results.
 
-```{r}
-library(broom)
-
-fcast_model_tbl %>%
-  mutate(modeled = invoke_map(func, params)) %>% 
-  mutate(forecasted = map(modeled, forecast, h = 4)) %>% 
-  mutate(tidied = map(forecasted, tidy)) %>% 
-  unnest(tidied)
-
-```
-
-Try to visualize those results - there is no unified structure. Can't do it! 
 
 ### Sweep the data
 
@@ -544,7 +530,7 @@ ggplot(aes(x = date,
     #             color = NA, 
     #             size = 0, 
     #             alpha = 0.5) +
-    geom_line(aes(linetype = func)) +
+    geom_line(aes(color = func)) +
     #facet_wrap(~func, nrow = 3) +
   labs(title = "Labor Force Part Forecasts",
        x = "",
@@ -572,7 +558,8 @@ mutate(swept = map(forecasted,
                    rename_index = "date")) %>% 
 unnest(swept)
 
-fcast_swept
+fcast_swept %>% 
+  head()
 ```
 
 To color different forecasts by different colors, first create two new columns. One to hold the actual values, called `actual_col` and one to hold just the forecast values, called `forecast_col`. 
@@ -612,7 +599,6 @@ fcast_swept_hc <-
   spread(func, value) %>% 
   tk_xts(date_var =  date)
 
-fcast_swept_hc$auto.arima
 
 highchart(type = 'stock')%>%
   hc_add_series(fcast_swept_hc$auto.arima, name = "arima") %>%
@@ -622,72 +608,72 @@ highchart(type = 'stock')%>%
 
 ```
 
-### Rolling Standard Deviation by group
+<!-- ### Rolling Standard Deviation by group -->
 
-There was a question about rolling volatility by group. 
+<!-- There was a question about rolling volatility by group.  -->
 
-```{r}
+<!-- ```{r} -->
 
-# The symbols vector holds our tickers. 
-symbols <- c("SPY","EFA", "IJS", "EEM","AGG")
+<!-- # The symbols vector holds our tickers.  -->
+<!-- symbols <- c("SPY","EFA", "IJS", "EEM","AGG") -->
 
- etf_returns <-
-   symbols %>% 
-   # get prices from yahoo
-   tq_get(get  = "stock.prices",
-           from = "2011-12-31",
-           to   = "2017-12-31") %>% 
-    group_by(symbol) %>%
-    # convert to monthly returns
-    tq_transmute(select     = adjusted, 
-                 mutate_fun = periodReturn, 
-                 period     = "monthly", 
-                 col_rename = "monthly_returns")
- etf_returns
-
-  
-```
-
-Have a look at the data. It's monthly returns for each ETF, grouped by the ETF symbol. Now we can run calculations on a group by group basis. 
-
-Two ways to do so: 
-
-1) use the built in functionality from `tidyquant`, which wraps `rollapply` and the `sd` function and allows us to apply to a tidy tibble.
-
-```{r}
-# width = the rolling window
-etf_returns %>% 
-  tq_mutate(mutate_fun = rollapply,
-            width = 6,
-            FUN = sd,
-            col_rename = "rolling_sd") %>%
-  select(date, rolling_sd)
-
-```
-
-That method works very well. Let's see how to do the same with `tibbletime`
-
-First create our own rolling function using `rollify` from the `tibbletime` package.
-
-```{r}  
-library(tibbletime)
-sd_roll_6 <- 
-  rollify(sd, window = 6)
-```
-
-Now convert `etf_returns` to a `tibbletime` object and apply that function.
-
-```{r}
-
-etf_returns %>%
-  as_tbl_time(index = date) %>% 
-  mutate(sd = sd_roll_6(monthly_returns)) %>% 
-  select(-monthly_returns)
+<!--  etf_returns <- -->
+<!--    symbols %>%  -->
+<!--    # get prices from yahoo -->
+<!--    tq_get(get  = "stock.prices", -->
+<!--            from = "2011-12-31", -->
+<!--            to   = "2017-12-31") %>%  -->
+<!--     group_by(symbol) %>% -->
+<!--     # convert to monthly returns -->
+<!--     tq_transmute(select     = adjusted,  -->
+<!--                  mutate_fun = periodReturn,  -->
+<!--                  period     = "monthly",  -->
+<!--                  col_rename = "monthly_returns") -->
+<!--  etf_returns -->
 
 
-```
+<!-- ``` -->
 
-Those two methods got us the same result, which one is better? Well, the first method is a bit easier because we didn't need to create our own rolling function. The second method is more flexible - we can create whatever rolling function we want and apply it to a tibbletime object. 
+<!-- Have a look at the data. It's monthly returns for each ETF, grouped by the ETF symbol. Now we can run calculations on a group by group basis.  -->
+
+<!-- Two ways to do so:  -->
+
+<!-- 1) use the built in functionality from `tidyquant`, which wraps `rollapply` and the `sd` function and allows us to apply to a tidy tibble. -->
+
+<!-- ```{r} -->
+<!-- # width = the rolling window -->
+<!-- etf_returns %>%  -->
+<!--   tq_mutate(mutate_fun = rollapply, -->
+<!--             width = 6, -->
+<!--             FUN = sd, -->
+<!--             col_rename = "rolling_sd") %>% -->
+<!--   select(date, rolling_sd) -->
+
+<!-- ``` -->
+
+<!-- That method works very well. Let's see how to do the same with `tibbletime` -->
+
+<!-- First create our own rolling function using `rollify` from the `tibbletime` package. -->
+
+<!-- ```{r}   -->
+<!-- library(tibbletime) -->
+<!-- sd_roll_6 <-  -->
+<!--   rollify(sd, window = 6) -->
+<!-- ``` -->
+
+<!-- Now convert `etf_returns` to a `tibbletime` object and apply that function. -->
+
+<!-- ```{r} -->
+
+<!-- etf_returns %>% -->
+<!--   as_tbl_time(index = date) %>%  -->
+<!--   mutate(sd = sd_roll_6(monthly_returns)) %>%  -->
+<!--   select(-monthly_returns) -->
+
+
+<!-- ``` -->
+
+<!-- Those two methods got us the same result, which one is better? Well, the first method is a bit easier because we didn't need to create our own rolling function. The second method is more flexible - we can create whatever rolling function we want and apply it to a tibbletime object.  -->
 
 
 

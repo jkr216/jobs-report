@@ -1,0 +1,120 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, comment = NA)
+library(tidyverse)
+library(tidyquant)
+library(timetk)
+library(highcharter)
+library(blastula)
+library(formattable)
+library(openxlsx)
+library(config)
+library(dbplyr)
+library(DBI)
+library(odbc)
+library(htmltools)
+library(gganimate)
+
+dw <- config::get("mssql")
+
+con <- DBI::dbConnect(odbc::odbc(),
+                      Driver = dw$Driver,
+                      Server = dw$Server,
+                      #Host = dw$Host,
+                      UID    = dw$UID,
+                      PWD    = dw$PWD,
+                      Port   = dw$Port,
+                      Database = dw$Database
+                      #Schema = dw$Schema
+                      )
+
+library(jsonlite)
+library(httr)
+
+```
+
+### Import data from sql
+
+```{r}
+eci <- 
+  fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/CIS2010000000000I?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&&startyear=2005&endyear=2019") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>%
+  select(year, period, periodName, value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%q")),
+         date = ceiling_date(date, unit = "quarter"),
+         value = as.numeric(value)) %>% 
+  select(date, everything(), -year, -period, -periodName) %>% 
+  arrange(date)
+
+eci %>% 
+  hchart(., hcaes(x = date, y = value), type = "line") %>% 
+  hc_title(text = "ECI index") %>% 
+  hc_subtitle(text = "there appears to be a trend")
+```
+
+
+
+```{r}
+avg_hourly_earnings <- 
+fromJSON("https://api.bls.gov/publicAPI/v2/timeseries/data/CES0500000008?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&&startyear=2005&endyear=2019") %>% 
+  pluck("Results", "series", "data", 1) %>% 
+  as_tibble() %>%
+  select(year, 
+         period, 
+         #periodName, 
+         value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         date = ceiling_date(date, unit = "month") - days(1),
+         value = as.numeric(value)) %>% 
+  select(date, everything(), -year, -period) %>% 
+  arrange(date)
+```
+
+```{r}
+bls_codes <- 
+c("CES0500000008", "CUUR0000SA0L1E" )
+
+bls_codes <-
+tribble(
+  ~code, ~series,
+  "CES0500000008", "wages",
+  "CUUR0000SA0L1E", "cpi_ex_food_energy",
+  "CUUR0000SAM1", "cpi_medi",
+  "CES3000000001", "manu_jobs"
+  )
+ 
+
+# best is to wrap to function when done
+bls_grab_func <- function(code) {
+
+  fromJSON(paste0("https://api.bls.gov/publicAPI/v2/timeseries/data/",
+                  code,
+                  "?registrationkey=7b12c91bcddf4bfeadb34ec3b61856f8&&startyear=2005&endyear=2019")) %>%  
+  pluck("Results", "series", "data", 1) %>%
+    as_tibble() %>% 
+    select(year, 
+         period, 
+         #periodName, 
+         value) %>% 
+  mutate(date = ymd(parse_date_time(paste0(year, period), "%Y%m")),
+         date = ceiling_date(date, unit = "month") - days(1),
+         value = as.numeric(value)) %>% 
+    select(value, date) 
+}
+
+bls_codes %>% 
+mutate(data = map(code, bls_grab_func)) %>% 
+  unnest(data) %>% 
+  group_by(series) %>% 
+  mutate(yoy_change = value/lag(value,1) -1) %>% 
+  ggplot(aes(x = date, y = yoy_change, color = series)) + 
+  geom_line() + 
+  facet_wrap(~series)
+  
+```
+
